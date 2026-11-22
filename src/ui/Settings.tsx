@@ -3,6 +3,7 @@ import { fx } from '../fx'
 import { actions, db, mergeRemote, useStore } from '../store'
 import { signIn, signOut, signUp, syncNow, useSync } from '../sync'
 import type { Row, Settings, ThemeMode } from '../types'
+import pkg from '../../package.json'
 
 function Toggle({ label, hint, value, onChange }: { label: string; hint?: string; value: boolean; onChange: (v: boolean) => void }) {
   return (
@@ -65,6 +66,7 @@ export function SettingsView() {
 
       <Account />
       <Backup />
+      <p className="version">Japanskan {pkg.version.replace(/\.0$/, '')}</p>
     </div>
   )
 }

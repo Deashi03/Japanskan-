@@ -51,11 +51,22 @@ export function SpeakButton({ text, small }: { text: string; small?: boolean }) 
   )
 }
 
-/** Hela ordkortet: ord, läsning, betydelse, nedbrytning, exempel och skillnader. */
-export function WordCard({ word }: { word: Word }) {
-  const showReading = useStore().settings.showExampleReading
+const KANA_ONLY = /^[\u3040-\u30ffー・〜～\s]+$/
+
+/** Ordet med läsningen (furigana) ovanför. */
+export function Furi({ word, reading }: { word: string; reading: string }) {
+  if (KANA_ONLY.test(word) || !reading || reading === word) return <Ja>{word}</Ja>
   return (
-    <div className="wordcard">
+    <ruby lang="ja" className="ja furi">
+      {word}
+      <rt>{reading}</rt>
+    </ruby>
+  )
+}
+
+export function WordHead({ word }: { word: Word }) {
+  return (
+    <>
       <div className="wc-head">
         <div>
           <div className="wc-reading"><Ja>{word.reading}</Ja></div>
@@ -64,47 +75,69 @@ export function WordCard({ word }: { word: Word }) {
         <SpeakButton text={word.word} />
       </div>
       <p className="wc-meaning">{word.meaning}</p>
-      {word.breakdown.length > 0 && (
-        <section>
-          <h4>Nedbrytning</h4>
-          <ul className="wc-list">
-            {word.breakdown.map((b, i) => (
-              <li key={i}>
-                <Ja className="strong">{b.kanji}</Ja>
-                {b.reading && <Ja className="muted">（{b.reading}）</Ja>} <span>= {b.meaning}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-      {word.examples.length > 0 && (
-        <section>
-          <h4>Exempel</h4>
-          {word.examples.map((ex, i) => (
-            <div className="wc-example" key={i}>
-              <div className="wc-ex-ja">
-                <Ja>{ex.ja}</Ja>
-                <SpeakButton text={ex.ja} small />
-              </div>
-              {showReading && ex.reading && <div className="muted"><Ja>{ex.reading}</Ja></div>}
-              <div>{ex.sv}</div>
-            </div>
-          ))}
-        </section>
-      )}
-      {word.distinctions.length > 0 && (
-        <section>
-          <h4>Vanlig skillnad</h4>
-          <ul className="wc-list">
-            {word.distinctions.map((d, i) => (
-              <li key={i}>
-                <Ja className="strong">{d.word}</Ja>
-                {d.reading && <Ja className="muted">（{d.reading}）</Ja>} <span>= {d.meaning}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
+    </>
+  )
+}
+
+export function WordBreakdown({ word }: { word: Word }) {
+  return (
+    <section>
+      <h4>Nedbrytning</h4>
+      <ul className="wc-list">
+        {word.breakdown.map((b, i) => (
+          <li key={i}>
+            <Ja className="strong">{b.kanji}</Ja>
+            {b.reading && <Ja className="muted">（{b.reading}）</Ja>} <span>= {b.meaning}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+export function WordExamples({ word }: { word: Word }) {
+  const showReading = useStore().settings.showExampleReading
+  return (
+    <section>
+      <h4>Exempel</h4>
+      {word.examples.map((ex, i) => (
+        <div className="wc-example" key={i}>
+          <div className="wc-ex-ja">
+            <Ja>{ex.ja}</Ja>
+            <SpeakButton text={ex.ja} small />
+          </div>
+          {showReading && ex.reading && <div className="muted"><Ja>{ex.reading}</Ja></div>}
+          <div>{ex.sv}</div>
+        </div>
+      ))}
+    </section>
+  )
+}
+
+export function WordDistinctions({ word }: { word: Word }) {
+  return (
+    <section>
+      <h4>Vanlig skillnad</h4>
+      <ul className="wc-list">
+        {word.distinctions.map((d, i) => (
+          <li key={i}>
+            <Ja className="strong">{d.word}</Ja>
+            {d.reading && <Ja className="muted">（{d.reading}）</Ja>} <span>= {d.meaning}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+/** Hela ordkortet: ord, läsning, betydelse, nedbrytning, exempel och skillnader. */
+export function WordCard({ word }: { word: Word }) {
+  return (
+    <div className="wordcard">
+      <WordHead word={word} />
+      {word.breakdown.length > 0 && <WordBreakdown word={word} />}
+      {word.examples.length > 0 && <WordExamples word={word} />}
+      {word.distinctions.length > 0 && <WordDistinctions word={word} />}
     </div>
   )
 }

@@ -1,15 +1,36 @@
 import { getSnap } from './store'
 
 let ctx: AudioContext | null = null
+
+/** iPhone spelar bara upp ljud som startats av en tryckning, och tystar webbljud när
+ *  ringsignalen är avstängd. Därför väcks ljudet vid varje tryckning, och appen ber om
+ *  att få spela upp som en vanlig mediaapp. */
+function unlock() {
+  if (!getSnap().settings.sound) return
+  try {
+    const session = (navigator as unknown as { audioSession?: { type: string } }).audioSession
+    if (session && session.type !== 'playback') session.type = 'playback'
+    const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+    ctx ??= new Ctor()
+    if (ctx.state !== 'running') {
+      void ctx.resume()
+      const src = ctx.createBufferSource()
+      src.buffer = ctx.createBuffer(1, 1, 22050)
+      src.connect(ctx.destination)
+      src.start(0)
+    }
+  } catch {
+    /* ljud är inte nödvändigt */
+  }
+}
+if (typeof window !== 'undefined') {
+  for (const ev of ['pointerdown', 'touchend', 'keydown'] as const) window.addEventListener(ev, unlock, { capture: true, passive: true })
+}
+
 function audio(): AudioContext | null {
   if (!getSnap().settings.sound) return null
-  try {
-    ctx ??= new AudioContext()
-    if (ctx.state === 'suspended') void ctx.resume()
-    return ctx
-  } catch {
-    return null
-  }
+  unlock()
+  return ctx
 }
 
 function tone(freq: number, start: number, dur: number, opts: { type?: OscillatorType; gain?: number; slideTo?: number } = {}) {
@@ -21,7 +42,7 @@ function tone(freq: number, start: number, dur: number, opts: { type?: Oscillato
   osc.type = opts.type ?? 'sine'
   osc.frequency.setValueAtTime(freq, t)
   if (opts.slideTo) osc.frequency.exponentialRampToValueAtTime(opts.slideTo, t + dur)
-  const peak = opts.gain ?? 0.18
+  const peak = (opts.gain ?? 0.18) * 1.8
   g.gain.setValueAtTime(0.0001, t)
   g.gain.exponentialRampToValueAtTime(peak, t + 0.012)
   g.gain.exponentialRampToValueAtTime(0.0001, t + dur)

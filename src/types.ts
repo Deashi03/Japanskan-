@@ -34,7 +34,7 @@ export interface CardData {
   lastExercise?: ExerciseType
 }
 
-export type ExerciseType = 'mc_ja_sv' | 'mc_sv_ja' | 'match' | 'type_reading' | 'type_from_sv'
+export type ExerciseType = 'mc_ja_sv' | 'mc_sv_ja' | 'match' | 'type_sv' | 'type_from_sv' | 'type_reading'
 
 export interface LogData {
   wordId: string

@@ -8,8 +8,9 @@ const scheduler = fsrs(
     request_retention: 0.9,
     enable_fuzz: true,
     enable_short_term: true,
-    // Ett nytt ord måste klaras tre gånger i rad innan det går över till långa intervall.
-    learning_steps: ['1m', '5m', '10m'],
+    // Ett nytt ord måste klaras fyra gånger i rad – en gång per övningstyp –
+    // innan det går över till långa intervall.
+    learning_steps: ['1m', '3m', '6m', '10m'],
     relearning_steps: ['10m'],
   }),
 )
@@ -45,10 +46,10 @@ export function isProblem(card: CardData | undefined): boolean {
 /** Räknar ut FSRS-betyget automatiskt från om svaret var rätt och hur snabbt det gick. */
 export function autoRating(card: CardData, correct: boolean, ms: number, exercise: ExerciseType): Grade {
   if (!correct) return Rating.Again
-  const typing = exercise === 'type_reading' || exercise === 'type_from_sv'
+  const typing = exercise === 'type_sv' || exercise === 'type_from_sv'
   if (exercise === 'match') return Rating.Good
-  const fast = typing ? 6000 : 3000
-  const slow = typing ? 25000 : 12000
+  const fast = typing ? 8000 : 3000
+  const slow = typing ? 30000 : 12000
   if (ms > slow) return Rating.Hard
   // "Lätt" hoppar över inlärningssteg, så det ges bara till ord som redan är inlärda.
   if (ms < fast && card.state === State.Review && !isProblem(card)) return Rating.Easy
@@ -99,20 +100,16 @@ export const STATUS_LABEL: Record<Status, string> = {
   mature: 'Moget',
 }
 
-const isKana = (s: string) => /^[぀-ヿー・\s]+$/.test(s)
+/** Ordningen ett nytt ord går igenom: flerval, dra till betydelse, svenska → japanska, skriv på svenska. */
+export const LEARNING_ORDER: ExerciseType[] = ['mc_ja_sv', 'match', 'mc_sv_ja', 'type_sv']
 
 /** Vilka övningstyper som passar ordet just nu – svårare ju bättre man kan det. */
-export function exercisesFor(word: Word, card: CardData): ExerciseType[] {
-  const canTypeReading = !isKana(word.word)
-  let list: ExerciseType[]
-  if (card.state === State.New || (card.state === State.Learning && card.learning_steps === 0)) list = ['mc_ja_sv']
-  else if (card.state === State.Learning && card.learning_steps === 1) list = ['match', 'mc_sv_ja']
-  else if (card.state === State.Learning || card.state === State.Relearning) list = ['type_reading', 'mc_sv_ja']
-  else if (card.stability < 7) list = ['type_reading', 'mc_sv_ja', 'match']
-  else list = ['type_from_sv', 'mc_sv_ja', 'type_reading']
-  if (!canTypeReading) list = list.filter((e) => e !== 'type_reading')
-  if (!list.length) list = ['mc_sv_ja']
-  return list
+export function exercisesFor(_word: Word, card: CardData): ExerciseType[] {
+  if (card.state === State.New) return ['mc_ja_sv']
+  if (card.state === State.Learning) return [LEARNING_ORDER[Math.min(card.learning_steps, LEARNING_ORDER.length - 1)]]
+  if (card.state === State.Relearning) return ['type_sv', 'mc_sv_ja']
+  if (card.stability < 7) return ['type_sv', 'mc_sv_ja', 'match']
+  return ['type_from_sv', 'type_sv', 'mc_sv_ja']
 }
 
 export function pickExercise(word: Word, card: CardData): ExerciseType {
