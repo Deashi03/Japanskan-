@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "words": [
+    {
+      "word": "冤罪", "reading": "えんざい",
+      "meaning": "Felaktig dom / att bli oskyldigt anklagad eller dömd för ett brott.",
+      "breakdown": [
+        { "kanji": "冤", "reading": "えん", "meaning": "falsk anklagelse, orättvisa" },
+        { "kanji": "罪", "reading": "ざい", "meaning": "brott, skuld" }
+      ],
+      "examples": [
+        { "ja": "彼は冤罪を訴えている。", "reading": "かれは えんざいを うったえている", "sv": "Han hävdar att han är oskyldigt dömd." },
+        { "ja": "冤罪事件として大きく報道された。", "reading": "えんざいじけんとして おおきく ほうどうされた", "sv": "Det rapporterades stort som ett fall av felaktig dom." }
+      ],
+      "distinctions": [
+        { "word": "冤罪", "reading": "えんざい", "meaning": "en felaktig anklagelse eller dom" },
+        { "word": "無罪", "reading": "むざい", "meaning": "oskyldig / frikänd i juridisk mening" }
+      ]
+    },
+    {
+      "word": "証拠", "reading": "しょうこ", "meaning": "Bevis.",
+      "breakdown": [
+        { "kanji": "証", "reading": "しょう", "meaning": "intyg, bevis" },
+        { "kanji": "拠", "reading": "こ", "meaning": "grund, stöd" }
+      ],
+      "examples": [
+        { "ja": "証拠がありません。", "reading": "しょうこが ありません", "sv": "Det finns inga bevis." },
+        { "ja": "これは大事な証拠です。", "reading": "これは だいじな しょうこです", "sv": "Det här är ett viktigt bevis." }
+      ],
+      "distinctions": []
+    },
+    {
+      "word": "裁判", "reading": "さいばん", "meaning": "Rättegång.",
+      "breakdown": [
+        { "kanji": "裁", "reading": "さい", "meaning": "döma, avgöra" },
+        { "kanji": "判", "reading": "ばん", "meaning": "bedömning, dom" }
+      ],
+      "examples": [
+        { "ja": "裁判は来週です。", "reading": "さいばんは らいしゅうです", "sv": "Rättegången är nästa vecka." },
+        { "ja": "裁判に勝ちました。", "reading": "さいばんに かちました", "sv": "Jag vann rättegången." }
+      ],
+      "distinctions": []
+    },
+    {
+      "word": "無罪", "reading": "むざい", "meaning": "Oskyldig / frikänd.",
+      "breakdown": [
+        { "kanji": "無", "reading": "む", "meaning": "utan, ingen" },
+        { "kanji": "罪", "reading": "ざい", "meaning": "brott, skuld" }
+      ],
+      "examples": [
+        { "ja": "彼は無罪です。", "reading": "かれは むざいです", "sv": "Han är oskyldig." },
+        { "ja": "無罪になりました。", "reading": "むざいに なりました", "sv": "Han blev frikänd." }
+      ],
+      "distinctions": [
+        { "word": "無罪", "reading": "むざい", "meaning": "inte skyldig" },
+        { "word": "有罪", "reading": "ゆうざい", "meaning": "skyldig" }
+      ]
+    },
+    {
+      "word": "犯人", "reading": "はんにん", "meaning": "Gärningsperson, förövare.",
+      "breakdown": [
+        { "kanji": "犯", "reading": "はん", "meaning": "begå brott" },
+        { "kanji": "人", "reading": "にん", "meaning": "person" }
+      ],
+      "examples": [
+        { "ja": "犯人はだれですか。", "reading": "はんにんは だれですか", "sv": "Vem är gärningspersonen?" },
+        { "ja": "犯人が見つかりました。", "reading": "はんにんが みつかりました", "sv": "Gärningspersonen har hittats." }
+      ],
+      "distinctions": []
+    },
+    {
+      "word": "警察", "reading": "けいさつ", "meaning": "Polis.",
+      "breakdown": [
+        { "kanji": "警", "reading": "けい", "meaning": "varna, vakta" },
+        { "kanji": "察", "reading": "さつ", "meaning": "undersöka, förstå" }
+      ],
+      "examples": [
+        { "ja": "警察を呼んでください。", "reading": "けいさつを よんでください", "sv": "Ring polisen, tack." },
+        { "ja": "警察が来ました。", "reading": "けいさつが きました", "sv": "Polisen kom." }
+      ],
+      "distinctions": []
+    },
+    {
+      "word": "弁護士", "reading": "べんごし", "meaning": "Advokat.",
+      "breakdown": [
+        { "kanji": "弁護", "reading": "べんご", "meaning": "försvar" },
+        { "kanji": "士", "reading": "し", "meaning": "yrkesperson" }
+      ],
+      "examples": [
+        { "ja": "兄は弁護士です。", "reading": "あには べんごしです", "sv": "Min storebror är advokat." },
+        { "ja": "弁護士に相談します。", "reading": "べんごしに そうだんします", "sv": "Jag rådfrågar en advokat." }
+      ],
+      "distinctions": []
+    }
+  ]
+}
