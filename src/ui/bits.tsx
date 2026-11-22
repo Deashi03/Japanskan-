@@ -1,4 +1,5 @@
-import type { ReactNode } from 'react'
+import { useMemo, type ReactNode } from 'react'
+import { furigana, type Seg } from '../furigana'
 import { canSpeak, speak } from '../fx'
 import { useStore } from '../store'
 import type { Word } from '../types'
@@ -103,10 +104,9 @@ export function WordExamples({ word }: { word: Word }) {
       {word.examples.map((ex, i) => (
         <div className="wc-example" key={i}>
           <div className="wc-ex-ja">
-            <Ja>{ex.ja}</Ja>
+            <FuriText ja={ex.ja} reading={ex.reading} show={showReading} word={word} />
             <SpeakButton text={ex.ja} small />
           </div>
-          {showReading && ex.reading && <div className="muted"><Ja>{ex.reading}</Ja></div>}
           <div>{ex.sv}</div>
         </div>
       ))}
@@ -127,6 +127,33 @@ export function WordDistinctions({ word }: { word: Word }) {
         ))}
       </ul>
     </section>
+  )
+}
+
+/** En mening med läsningen ovanför varje kanjigrupp. Går det inte att räkna ut
+ *  visas läsningen på en egen rad under meningen. */
+export function FuriText({ ja, reading, show = true, word }: { ja: string; reading: string; show?: boolean; word?: Word }) {
+  const segs = useMemo(() => {
+    if (!show) return null
+    const at = word ? ja.indexOf(word.word) : -1
+    return furigana(ja, reading, at >= 0 ? { at, len: word!.word.length, reading: word!.reading } : undefined)
+  }, [ja, reading, show, word])
+  if (!show || !reading) return <Ja>{ja}</Ja>
+  if (!segs)
+    return (
+      <span>
+        <Ja>{ja}</Ja>
+        <span className="reading-line"><Ja>{reading}</Ja></span>
+      </span>
+    )
+  return <Segs segs={segs} />
+}
+
+export function Segs({ segs }: { segs: Seg[] }) {
+  return (
+    <span lang="ja" className="ja">
+      {segs.map((s, i) => (s.r ? <ruby className="furi sent" key={i}>{s.t}<rt>{s.r}</rt></ruby> : <span key={i}>{s.t}</span>))}
+    </span>
   )
 }
 

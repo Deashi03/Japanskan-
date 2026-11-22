@@ -443,3 +443,17 @@ ruby.furi rt { line-height: 1.6; }
 .cloze .gap:not(.filled) { color: var(--muted); }
 .listen-answer { min-height: 3.4rem; display: flex; align-items: flex-end; }
 .listen-answer .pop-in { display: inline-block; }
+
+/* 0.4 */
+ruby.furi.sent rt { font-size: 0.5em; line-height: 1.4; }
+.wc-ex-ja, .sentence-text { line-height: 2; }
+.reading-line { display: block; font-size: 0.8em; font-weight: 400; color: var(--muted); line-height: 1.4; }
+.row.between { justify-content: space-between; }
+.check { display: flex; gap: 10px; align-items: flex-start; font-size: 0.9rem; color: var(--muted); }
+.check input { width: 20px; height: 20px; flex: none; margin: 1px 0 0; accent-color: var(--accent); }
+.wordrow-wrap { display: flex; align-items: stretch; }
+.wordrow-wrap .wordrow { flex: 1; min-width: 0; }
+.pick { flex: none; width: 46px; border: 0; background: none; color: var(--muted); display: grid; place-items: center; border-right: 1px solid var(--line); }
+.pick.on { color: var(--accent-ink); background: var(--accent); }
+.pick:not(.on):hover { background: var(--surface-2); color: var(--accent); }
+ruby.furi.sent rt { font-size: 0.56em; }

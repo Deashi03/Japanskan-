@@ -16,6 +16,8 @@ export interface Word {
   createdAt: number
   order: number
   suspended?: boolean
+  /** Tidpunkt då ordet valdes att läras härnäst. Valda ord introduceras före alla andra nya ord. */
+  priority?: number
 }
 
 /** FSRS-kortets tillstånd, med datum som millisekunder så det går att spara som JSON. */
@@ -72,6 +74,8 @@ export interface Settings {
   darkTo: string
   showExampleReading: boolean
   autoSpeak: boolean
+  /** Ord användaren vill lära sig och ska skicka till en AI. */
+  wishlist: string
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -84,6 +88,7 @@ export const DEFAULT_SETTINGS: Settings = {
   darkTo: '07:00',
   showExampleReading: true,
   autoSpeak: true,
+  wishlist: '',
 }
 
 export type Kind = 'word' | 'card' | 'log' | 'settings'

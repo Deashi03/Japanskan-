@@ -5,6 +5,7 @@ import { autoRating, exercisesFor, isProblem, knownCard, LEARNING_ORDER, newCard
 import { afterIntro, buildExercise, buildQueue, checkReading, checkSwedish, extraQueue, nextFresh, newQuota, requeue, type QItem } from './session'
 import { dayKey, streaks } from './stats'
 import { isDark } from './fx'
+import { furigana } from './furigana'
 import type { Snapshot } from './store'
 import { DEFAULT_SETTINGS, type CardData, type Word } from './types'
 
@@ -140,6 +141,18 @@ describe('session', () => {
     expect(q.slice(0, 5)).toEqual([0, 1, 2, 3, 4].map((i) => ({ wordId: 'w' + i, kind: 'intro' })))
     expect(q.slice(5)).toEqual([{ wordId: 'w11', kind: 'quiz', learning: undefined }, { wordId: 'w10', kind: 'quiz', learning: undefined }])
   })
+  it('ord man valt själv introduceras före alla andra, i den ordning de valdes', () => {
+    const list = words.map((w) => (w.id === 'w9' ? { ...w, priority: 200 } : w.id === 'w7' ? { ...w, priority: 100 } : w))
+    const q = buildQueue(snapOf(list), NOW)
+    expect(q.map((i) => i.wordId)).toEqual(['w7', 'w9', 'w0', 'w1', 'w2'])
+    // Fler valda än passet rymmer: resten står kvar först i kön till nästa pass.
+    const many = words.map((w, i) => (i >= 4 ? { ...w, priority: i } : w))
+    const first = buildQueue(snapOf(many), NOW).map((i) => i.wordId)
+    expect(first).toEqual(['w4', 'w5', 'w6', 'w7', 'w8'])
+    const cards = first.map((id): [string, CardData] => [id, { ...newCard(NOW), state: State.Review, due: NOW + DAY }])
+    expect(buildQueue(snapOf(many, cards), NOW).map((i) => i.wordId)).toEqual(['w9', 'w10', 'w11', 'w0', 'w1'])
+    expect(nextFresh(snapOf(list), [])?.id).toBe('w7')
+  })
   it('pausade ord hoppas över och dagstaket respekteras', () => {
     const snap = snapOf([word(0, { suspended: true }), word(1), word(2)], [['w1', { ...newCard(NOW), state: State.Review, due: NOW + DAY }]], { ...DEFAULT_SETTINGS, dailyNewCap: 1 })
     expect(newQuota(snap, NOW)).toBe(0)
@@ -274,6 +287,29 @@ describe('session', () => {
     expect(checkReading('hanin', h)).toBe(false)
     expect(checkReading('ra-men', word(2, { word: 'ラーメン', reading: 'ラーメン' }))).toBe(true)
     expect(checkReading('らーめん', word(2, { word: 'ラーメン', reading: 'ラーメン' }))).toBe(true)
+  })
+})
+
+describe('furigana i meningar', () => {
+  const show = (ja: string, reading: string, fixed?: Parameters<typeof furigana>[2]) =>
+    furigana(ja, reading, fixed)?.map((s) => (s.r ? `${s.t}[${s.r}]` : s.t)).join('')
+  it('lägger läsningen på rätt kanji', () => {
+    expect(show('店で割引券をもらった。', 'みせで わりびきけんを もらった')).toBe('店[みせ]で割引券[わりびきけん]をもらった。')
+    expect(show('彼は冤罪を訴えている。', 'かれは えんざいを うったえている')).toBe('彼[かれ]は冤罪[えんざい]を訴[うった]えている。')
+    expect(show('ラーメンを食べた。', 'ラーメンを たべた')).toBe('ラーメンを食[た]べた。')
+    expect(show('テストは5時からです。', 'テストは ごじからです')).toBe('テストは5時[ごじ]からです。')
+    expect(show('これはペンです。', 'これは ペンです')).toBe('これはペンです。')
+  })
+  it('ett känt målord får exakt sin läsning även intill andra kanji', () => {
+    expect(show('冤罪事件として報道された。', 'えんざいじけんとして ほうどうされた', { at: 0, len: 2, reading: 'えんざい' })).toBe(
+      '冤罪[えんざい]事件[じけん]として報道[ほうどう]された。',
+    )
+    // Stämmer inte den kända läsningen (ordet står böjt) används den vanliga uppdelningen.
+    expect(show('道に迷った。', 'みちに まよった', { at: 2, len: 2, reading: 'まよう' })).toBe('道[みち]に迷[まよ]った。')
+  })
+  it('ger upp i stället för att gissa när meningen och läsningen inte hör ihop', () => {
+    expect(furigana('店で買った。', 'ぜんぜん ちがう')).toBeNull()
+    expect(furigana('店で買った。', '')).toBeNull()
   })
 })
 

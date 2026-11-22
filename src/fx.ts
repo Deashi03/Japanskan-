@@ -130,22 +130,78 @@ function vibrate(pattern: number | number[]) {
   if (getSnap().settings.haptics) navigator.vibrate?.(pattern)
 }
 
-// Pentatonisk skala från C5: varje rätt i rad klättrar ett steg och låter alltid harmoniskt.
-const PENTA = [0, 2, 4, 7, 9, 12, 14, 16, 19, 21, 24]
+/** Klockton: grundton med ostämda övertoner och lång efterklang. */
+function bell(freq: number, start: number, dur = 0.9, gain = 0.12) {
+  tone(freq, start, dur, { gain, attack: 0.003 })
+  tone(freq * 2.76, start, dur * 0.45, { gain: gain * 0.35, attack: 0.002 })
+  tone(freq * 5.4, start, dur * 0.2, { gain: gain * 0.18, attack: 0.002 })
+}
+
+/** Mjuk baston som ger tyngd åt längre sviter. */
+function bass(freq: number, start: number, dur = 0.5, gain = 0.2) {
+  tone(freq, start, dur, { gain, type: 'triangle', attack: 0.01, wet: 0.4 })
+  tone(freq * 2, start, dur * 0.5, { gain: gain * 0.3 })
+}
+
+// Pentatonisk skala från C5: alla toner låter bra ihop, i vilken ordning som helst.
+const PENTA = [0, 2, 4, 7, 9]
 const note = (semi: number) => 523.25 * Math.pow(2, semi / 12)
+/** Skalsteg nummer i, uppåt över oktaverna. */
+const deg = (i: number) => note(PENTA[((i % 5) + 5) % 5] + 12 * Math.floor(i / 5))
+
+// Små melodier (i skalsteg räknat från grundtonen) som turas om, så att två rätt
+// i rad aldrig låter likadant.
+const MOTIFS = [
+  [0, 2],
+  [0, 3],
+  [1, 3],
+  [0, 2, 4],
+  [2, 4],
+  [0, 1, 3],
+  [3, 1, 4],
+  [0, 2, 3, 5],
+  [4, 2, 5],
+  [0, 4],
+]
+// Avslutningar vid var femte rätt, en ny för varje nivå.
+const FLOURISH = [
+  [0, 2, 4, 5],
+  [5, 4, 2, 5, 7],
+  [0, 2, 4, 5, 7, 9],
+  [4, 5, 7, 5, 7, 9, 10],
+]
 
 export const fx = {
-  /** Rätt svar – tonen stiger för varje rätt i rad, med extra glitter vid var femte. */
+  /** Rätt svar. Varje rätt i rad får en egen liten melodi, och ljudet växer med sviten:
+   *  efter 5 rätt tillkommer klockor, efter 10 stämmor, efter 15 bas och efter 20 ett eko.
+   *  Var femte rätt avslutas med en löpning. */
   correct(combo = 0) {
-    const base = PENTA[Math.min(combo, PENTA.length - 1)]
-    mallet(note(base), 0, 0.42, 0.3)
-    mallet(note(base + 7), 0.085, 0.6, 0.3)
-    sparkle(note(base + 19), 0.12, 3, 0.045)
+    const tier = Math.min(Math.floor(combo / 5), 4)
+    const root = (combo % 5) + tier
+    const motif = MOTIFS[(combo * 3 + tier) % MOTIFS.length]
+    const step = tier >= 2 ? 0.07 : 0.085
+    motif.forEach((d, i) => {
+      const last = i === motif.length - 1
+      const t = i * step
+      mallet(deg(root + d), t, last ? 0.6 : 0.4, 0.3)
+      if (tier >= 1 && last) bell(deg(root + d + 5), t + 0.02, 0.9, 0.09)
+      if (tier >= 2) mallet(deg(root + d - 2), t, last ? 0.5 : 0.32, 0.14)
+      if (tier >= 4) mallet(deg(root + d + 5), t + 0.16, 0.3, 0.07)
+    })
+    const end = (motif.length - 1) * step
+    if (tier >= 3) bass(deg(root - 10), 0, 0.55, 0.2)
+    sparkle(deg(root + motif[motif.length - 1] + 10), end + 0.04, 2 + Math.min(tier, 3), 0.04)
+
     if (combo > 0 && (combo + 1) % 5 === 0) {
-      ;[12, 16, 19, 24].forEach((s, i) => mallet(note(base + s), 0.2 + i * 0.07, 0.5, 0.2))
-      sparkle(note(base + 24), 0.45, 5, 0.06)
+      const run = FLOURISH[Math.min(tier, FLOURISH.length - 1)]
+      run.forEach((d, i) => mallet(deg(root + d), end + 0.16 + i * 0.06, 0.45, 0.2))
+      const top = end + 0.16 + run.length * 0.06
+      ;[0, 2, 4].forEach((d) => bell(deg(root + d + 5), top, 1.2, 0.08))
+      bass(deg(root - 10), top, 0.9, 0.18)
+      sparkle(deg(root + 12), top + 0.05, 5, 0.06)
+      noise(top - 0.05, 0.4, { from: 2500, to: 8000, gain: 0.03 })
     }
-    vibrate(15)
+    vibrate(combo > 0 && (combo + 1) % 5 === 0 ? [15, 40, 25] : 15)
   },
   /** Fel svar – mjuk, dov och kort, så att det inte känns som ett straff. */
   wrong() {
@@ -156,7 +212,7 @@ export const fx = {
   },
   /** Ett par hamnar rätt i dra-övningen. */
   pop(i = 0) {
-    const f = note(PENTA[Math.min(i + 2, PENTA.length - 1)])
+    const f = deg(i + 2)
     tone(f, 0, 0.14, { gain: 0.26, slideTo: f * 1.5, attack: 0.003 })
     mallet(f * 1.5, 0.06, 0.3, 0.16)
     vibrate(8)

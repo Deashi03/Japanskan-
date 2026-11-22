@@ -1,12 +1,14 @@
 import { useMemo, useState } from 'react'
 import { formatDue, isProblem, STATUS_LABEL, statusOf } from '../srs'
+import { byOrder } from '../session'
 import { actions, useStore } from '../store'
 import type { Breakdown, Distinction, Example, Word } from '../types'
 import { Icon, Ja, Modal, WordCard } from './bits'
 
-type Filter = 'all' | 'new' | 'learning' | 'known' | 'problem' | 'suspended'
+type Filter = 'all' | 'chosen' | 'new' | 'learning' | 'known' | 'problem' | 'suspended'
 const FILTERS: [Filter, string][] = [
   ['all', 'Alla'],
+  ['chosen', 'Valda härnäst'],
   ['new', 'Nya'],
   ['learning', 'Lärs in'],
   ['known', 'Kan'],
@@ -32,6 +34,7 @@ export function WordList({ onImport }: { onImport: () => void }) {
         if (q && !(w.word.includes(q) || w.reading.includes(q) || w.meaning.toLowerCase().includes(q) || w.synonyms?.some((x) => x.toLowerCase().includes(q)))) return false
         const c = snap.cards.get(w.id)
         const s = statusOf(c)
+        if (filter === 'chosen') return !c && !!w.priority
         if (filter === 'new') return s === 'new'
         if (filter === 'learning') return s === 'learning'
         if (filter === 'known') return s === 'young' || s === 'mature'
@@ -39,7 +42,7 @@ export function WordList({ onImport }: { onImport: () => void }) {
         if (filter === 'suspended') return !!w.suspended
         return true
       })
-      .sort((a, b) => a.createdAt - b.createdAt || a.order - b.order)
+      .sort(filter === 'chosen' ? byOrder : (a, b) => a.createdAt - b.createdAt || a.order - b.order)
   }, [snap, query, filter, list])
 
   const open = openId ? snap.words.get(openId) : undefined
@@ -54,6 +57,7 @@ export function WordList({ onImport }: { onImport: () => void }) {
         <button className="btn primary" onClick={onImport}><Icon name="plus" size={18} /> Importera</button>
       </header>
       <input className="search" type="search" placeholder="Sök på japanska eller svenska" value={query} onChange={(e) => setQuery(e.target.value)} />
+      {filter === 'chosen' && <p className="muted small">Valda ord introduceras före alla andra nya ord, i den ordning du valde dem. Är de fler än passet rymmer kommer resten i nästa pass.</p>}
       <div className="chips">
         {FILTERS.map(([id, label]) => (
           <button key={id} className={'pill' + (filter === id ? ' active' : '')} onClick={() => setFilter(id)}>{label}</button>
@@ -91,14 +95,25 @@ export function WordList({ onImport }: { onImport: () => void }) {
             const c = snap.cards.get(w.id)
             const s = statusOf(c)
             return (
-              <li key={w.id}>
+              <li key={w.id} className="wordrow-wrap">
+                {!c && !w.suspended && (
+                  <button
+                    className={'pick' + (w.priority ? ' on' : '')}
+                    aria-pressed={!!w.priority}
+                    aria-label={w.priority ? `Ta bort ${w.word} från nästa pass` : `Lär mig ${w.word} härnäst`}
+                    title={w.priority ? 'Vald till nästa pass' : 'Lär mig härnäst'}
+                    onClick={() => void actions.saveWords([{ ...w, priority: w.priority ? undefined : Date.now() }])}
+                  >
+                    <Icon name={w.priority ? 'check' : 'plus'} size={18} />
+                  </button>
+                )}
                 <button className={'wordrow' + (w.suspended ? ' paused' : '')} onClick={() => setOpenId(w.id)}>
                   <div className="wordrow-main">
                     <div><Ja className="strong">{w.word}</Ja> <Ja className="muted">{w.reading}</Ja></div>
                     <div className="clamp1 muted">{w.meaning}</div>
                   </div>
                   <div className="wordrow-side">
-                    {w.suspended ? <span className="badge">Pausat</span> : isProblem(c) ? <span className="badge warn">Problemord</span> : <span className={'badge s-' + s}>{STATUS_LABEL[s]}</span>}
+                    {w.suspended ? <span className="badge">Pausat</span> : !c && w.priority ? <span className="badge s-learning">Härnäst</span> : isProblem(c) ? <span className="badge warn">Problemord</span> : <span className={'badge s-' + s}>{STATUS_LABEL[s]}</span>}
                     {c && !w.suspended && s !== 'new' && <span className="muted small">{formatDue(c.due, now)}</span>}
                   </div>
                 </button>
@@ -119,6 +134,11 @@ export function WordList({ onImport }: { onImport: () => void }) {
             {openCard && <div><dt>Antal svar / missar</dt><dd>{openCard.reps} / {openCard.lapses}</dd></div>}
           </dl>
           <div className="row wrap">
+            {!openCard && !open.suspended && (
+              <button className={'btn' + (open.priority ? '' : ' primary')} onClick={() => void actions.saveWords([{ ...open, priority: open.priority ? undefined : Date.now() }])}>
+                {open.priority ? 'Ta bort från nästa pass' : 'Lär mig härnäst'}
+              </button>
+            )}
             <button className="btn" onClick={() => setEditing(true)}>Redigera</button>
             <button className="btn" onClick={() => void actions.saveWords([{ ...open, suspended: !open.suspended }])}>{open.suspended ? 'Återuppta' : 'Pausa'}</button>
             <button

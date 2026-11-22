@@ -21,7 +21,10 @@ export function shuffle<T>(arr: T[], rnd: () => number = Math.random): T[] {
   return a
 }
 
-const byOrder = (a: Word, b: Word) => a.createdAt - b.createdAt || a.order - b.order
+/** Nya ord introduceras i den ordning de importerades – men ord man själv valt går före,
+ *  i den ordning de valdes. */
+export const byOrder = (a: Word, b: Word) =>
+  Number(!a.priority) - Number(!b.priority) || (a.priority ?? 0) - (b.priority ?? 0) || a.createdAt - b.createdAt || a.order - b.order
 
 /** Hur många nya ord som får introduceras i en session som startar nu. */
 export function newQuota(snap: Snapshot, now: number): number {
@@ -36,13 +39,16 @@ export function newQuota(snap: Snapshot, now: number): number {
 export function countDue(snap: Snapshot, now: number) {
   let due = 0
   let fresh = 0
+  let chosen = 0
   for (const w of snap.words.values()) {
     if (w.suspended) continue
     const c = snap.cards.get(w.id)
-    if (!c) fresh++
-    else if (c.due <= now) due++
+    if (!c) {
+      fresh++
+      if (w.priority) chosen++
+    } else if (c.due <= now) due++
   }
-  return { due, fresh, newNow: Math.min(fresh, newQuota(snap, now)) }
+  return { due, fresh, chosen, newNow: Math.min(fresh, newQuota(snap, now)) }
 }
 
 /** Sessionens kö: först nya ord (introduktionskort), sedan repetitioner med mest försenade först. */
