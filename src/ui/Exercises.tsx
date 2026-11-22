@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { fx } from '../fx'
+import { burst, fx, speak } from '../fx'
 import { checkReading, checkSwedish, kanaPreview, shuffle, type Exercise } from '../session'
-import type { Word } from '../types'
-import { Furi, SpeakButton } from './bits'
+import { Furi, Icon, Ja, SpeakButton } from './bits'
 
 export interface Result { wordId: string; correct: boolean }
 type Done = (results: Result[], ms: number) => void
@@ -12,21 +11,33 @@ function useElapsed() {
   return () => performance.now() - start.current
 }
 
-export function MultipleChoice({ ex, onDone }: { ex: Extract<Exercise, { options: Word[] }>; onDone: Done }) {
-  const [picked, setPicked] = useState<string | null>(null)
-  const elapsed = useElapsed()
-  const jaToSv = ex.type === 'mc_ja_sv'
+const optionStyle = (i: number) => ({ '--i': i }) as React.CSSProperties
 
-  function pick(id: string) {
+/** Flerval i tre varianter: se ordet, se betydelsen eller bara höra ordet. */
+export function MultipleChoice({ ex, onDone }: { ex: Extract<Exercise, { type: 'mc_ja_sv' | 'mc_sv_ja' | 'listen' }>; onDone: Done }) {
+  const [picked, setPicked] = useState<string | null>(null)
+  const [revealed, setRevealed] = useState(false)
+  const elapsed = useElapsed()
+  const listen = ex.type === 'listen'
+  const toSwedish = ex.type !== 'mc_sv_ja'
+
+  useEffect(() => {
+    if (listen) speak(ex.word.word)
+  }, [listen, ex])
+
+  function pick(id: string, el: Element | null) {
     if (picked) return
     setPicked(id)
-    onDone([{ wordId: ex.word.id, correct: id === ex.word.id }], elapsed())
+    const correct = id === ex.word.id
+    if (correct) burst(el)
+    setRevealed(true)
+    onDone([{ wordId: ex.word.id, correct }], elapsed())
   }
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const i = Number(e.key) - 1
-      if (i >= 0 && i < ex.options.length) pick(ex.options[i].id)
+      if (i >= 0 && i < ex.options.length) pick(ex.options[i].id, document.querySelectorAll('.option')[i])
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -34,8 +45,15 @@ export function MultipleChoice({ ex, onDone }: { ex: Extract<Exercise, { options
 
   return (
     <div className="exercise">
-      <p className="ex-label">{jaToSv ? 'Vad betyder ordet?' : 'Vilket ord betyder detta?'}</p>
-      {jaToSv ? (
+      <p className="ex-label">{listen ? 'Lyssna – vad betyder ordet?' : toSwedish ? 'Vad betyder ordet?' : 'Vilket ord betyder detta?'}</p>
+      {listen ? (
+        <div className="prompt-listen">
+          <button type="button" className="listen-btn" onClick={() => speak(ex.word.word)} aria-label="Spela upp igen">
+            <Icon name="sound" size={44} />
+          </button>
+          <div className="listen-answer">{revealed && <span className="pop-in"><Furi word={ex.word.word} reading={ex.word.reading} /></span>}</div>
+        </div>
+      ) : toSwedish ? (
         <div className="prompt-ja">
           <Furi word={ex.word.word} reading={ex.word.reading} />
           <SpeakButton text={ex.word.word} />
@@ -43,13 +61,103 @@ export function MultipleChoice({ ex, onDone }: { ex: Extract<Exercise, { options
       ) : (
         <div className="prompt-sv">{ex.word.meaning}</div>
       )}
-      <div className={'options' + (jaToSv ? '' : ' grid')}>
+      <div className={'options' + (toSwedish ? '' : ' grid')}>
         {ex.options.map((o, i) => {
           const state = !picked ? '' : o.id === ex.word.id ? ' right' : o.id === picked ? ' wrong' : ' dim'
           return (
-            <button key={o.id} className={'option' + state} disabled={!!picked} onClick={() => pick(o.id)}>
+            <button key={o.id} style={optionStyle(i)} className={'option' + state} disabled={!!picked} onClick={(e) => pick(o.id, e.currentTarget)}>
               <kbd>{i + 1}</kbd>
-              {jaToSv ? <span>{o.meaning}</span> : <span className="option-ja"><Furi word={o.word} reading={o.reading} /></span>}
+              {toSwedish ? <span>{o.meaning}</span> : <span className="option-ja"><Furi word={o.word} reading={o.reading} /></span>}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+/** Meningsförståelse: hör en exempelmening och välj rätt översättning. */
+export function Sentence({ ex, onDone }: { ex: Extract<Exercise, { type: 'sentence' }>; onDone: Done }) {
+  const [picked, setPicked] = useState<string | null>(null)
+  const [showText, setShowText] = useState(false)
+  const elapsed = useElapsed()
+
+  useEffect(() => {
+    speak(ex.example.ja)
+  }, [ex])
+
+  function pick(choice: string, el: Element | null) {
+    if (picked) return
+    setPicked(choice)
+    const correct = choice === ex.example.sv
+    if (correct) burst(el)
+    setShowText(true)
+    onDone([{ wordId: ex.word.id, correct }], elapsed())
+  }
+
+  return (
+    <div className="exercise">
+      <p className="ex-label">Lyssna – vad betyder meningen?</p>
+      <div className="prompt-listen">
+        <button type="button" className="listen-btn" onClick={() => speak(ex.example.ja)} aria-label="Spela upp igen">
+          <Icon name="sound" size={44} />
+        </button>
+        {showText ? (
+          <div className="sentence-text pop-in">
+            <Ja>{ex.example.ja}</Ja>
+            {ex.example.reading && <div className="muted small"><Ja>{ex.example.reading}</Ja></div>}
+          </div>
+        ) : (
+          <button type="button" className="btn ghost small" onClick={() => setShowText(true)}>Visa texten</button>
+        )}
+      </div>
+      <div className="options">
+        {ex.choices.map((c, i) => {
+          const state = !picked ? '' : c === ex.example.sv ? ' right' : c === picked ? ' wrong' : ' dim'
+          return (
+            <button key={c} style={optionStyle(i)} className={'option' + state} disabled={!!picked} onClick={(e) => pick(c, e.currentTarget)}>
+              <kbd>{i + 1}</kbd>
+              <span>{c}</span>
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+/** Lucktext: exempelmeningen med ordet borttaget – välj ordet som passar. */
+export function Cloze({ ex, onDone }: { ex: Extract<Exercise, { type: 'cloze' }>; onDone: Done }) {
+  const [picked, setPicked] = useState<string | null>(null)
+  const elapsed = useElapsed()
+
+  function pick(id: string, el: Element | null) {
+    if (picked) return
+    setPicked(id)
+    const correct = id === ex.word.id
+    if (correct) burst(el)
+    onDone([{ wordId: ex.word.id, correct }], elapsed())
+  }
+
+  return (
+    <div className="exercise">
+      <p className="ex-label">Vilket ord saknas?</p>
+      <div className="cloze">
+        <div className="cloze-ja">
+          <Ja>{ex.before}</Ja>
+          <span className={'gap' + (picked ? ' filled' : '')}>{picked ? <Furi word={ex.word.word} reading={ex.word.reading} /> : '？'}</span>
+          <Ja>{ex.after}</Ja>
+          {picked && <SpeakButton text={ex.example.ja} small />}
+        </div>
+        <div className="cloze-sv">{ex.example.sv}</div>
+      </div>
+      <div className="options grid">
+        {ex.options.map((o, i) => {
+          const state = !picked ? '' : o.id === ex.word.id ? ' right' : o.id === picked ? ' wrong' : ' dim'
+          return (
+            <button key={o.id} style={optionStyle(i)} className={'option' + state} disabled={!!picked} onClick={(e) => pick(o.id, e.currentTarget)}>
+              <kbd>{i + 1}</kbd>
+              <span className="option-ja"><Furi word={o.word} reading={o.reading} /></span>
             </button>
           )
         })}
@@ -75,6 +183,7 @@ export function Typing({ ex, onDone }: { ex: Extract<Exercise, { type: 'type_sv'
     if (!giveUp && !value.trim()) return
     const correct = !giveUp && (toJapanese ? checkReading(value, ex.word) : checkSwedish(value, ex.word))
     setState(correct ? 'right' : 'wrong')
+    if (correct) burst(input.current)
     input.current?.blur()
     onDone([{ wordId: ex.word.id, correct }], elapsed())
   }
@@ -143,6 +252,7 @@ export function Matching({ ex, onDone }: { ex: Extract<Exercise, { type: 'match'
       const next = new Set(matched).add(wordId)
       setMatched(next)
       fx.pop(next.size - 1)
+      requestAnimationFrame(() => burst(document.querySelector(`[data-meaning="${meaningId}"]`), 10))
       if (next.size === ex.words.length) {
         const ms = elapsed() / ex.words.length
         setTimeout(() => onDone(ex.graded.map((id) => ({ wordId: id, correct: !failed.current.has(id) })), ms), 600)

@@ -360,3 +360,86 @@ ruby.furi rt { font-size: 0.36em; font-weight: 500; color: var(--muted); letter-
 .sheet-actions .btn.primary { flex: 1 0 100%; }
 .prompt-ja { line-height: 1.5; padding: 10px 0; }
 ruby.furi rt { line-height: 1.6; }
+
+/* 0.3 – lyssna, meningar, lucktext */
+.prompt-listen { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 8px 0 4px; }
+.listen-btn { width: 108px; height: 108px; border-radius: 50%; border: 0; display: grid; place-items: center; background: var(--accent); color: var(--accent-ink); box-shadow: 0 6px 0 var(--accent-deep); position: relative; transition: transform 0.06s, box-shadow 0.06s; }
+.listen-btn:active { transform: translateY(5px); box-shadow: 0 1px 0 var(--accent-deep); }
+.listen-btn::before, .listen-btn::after { content: ''; position: absolute; inset: 0; border-radius: 50%; border: 3px solid var(--accent); opacity: 0; animation: ripple 1.8s ease-out infinite; pointer-events: none; }
+.listen-btn::after { animation-delay: 0.9s; }
+.listen-answer { font-size: 2rem; font-weight: 700; line-height: 1.6; }
+.sentence-text { text-align: center; font-size: 1.25rem; font-weight: 600; }
+.cloze { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; display: flex; flex-direction: column; gap: 10px; }
+.cloze-ja { font-size: 1.45rem; font-weight: 600; line-height: 2.1; font-family: var(--font-ja); }
+.cloze .gap { display: inline-block; min-width: 3.2em; text-align: center; border-bottom: 3px dashed var(--accent); margin: 0 4px; color: var(--accent); transition: all 0.2s; }
+.cloze .gap.filled { border-bottom-style: solid; border-color: var(--good); color: var(--good); animation: bounce 0.4s cubic-bezier(0.2, 1.6, 0.4, 1); }
+.cloze-sv { color: var(--muted); }
+.synonyms { font-size: 0.9rem; margin-top: 14px; }
+.synonyms span { color: var(--muted); }
+.known-btn { width: 100%; margin-bottom: 6px; font-size: 0.95rem; }
+
+/* 0.3 – animationer */
+.pop-in { animation: slidein 0.34s cubic-bezier(0.2, 0.9, 0.25, 1); }
+@keyframes slidein { from { opacity: 0; transform: translateX(28px) scale(0.985); } }
+.options .option { animation: optin 0.36s cubic-bezier(0.2, 1.2, 0.35, 1) backwards; animation-delay: calc(var(--i, 0) * 55ms + 60ms); }
+@keyframes optin { from { opacity: 0; transform: translateY(16px) scale(0.96); } }
+.option.right { animation: correct 0.5s cubic-bezier(0.2, 1.6, 0.4, 1); }
+.option.wrong { animation: shake 0.42s; }
+.option.dim { animation: none; transition: opacity 0.25s; }
+@keyframes correct { 0% { transform: scale(1); } 35% { transform: scale(1.07); } 60% { transform: scale(0.98); } 100% { transform: scale(1); } }
+.option.right::after { content: ''; position: absolute; inset: -2px; border-radius: inherit; border: 3px solid var(--good); animation: ring 0.6s ease-out forwards; pointer-events: none; }
+.option { position: relative; }
+@keyframes ring { from { opacity: 0.9; transform: scale(1); } to { opacity: 0; transform: scale(1.12, 1.35); } }
+@keyframes ripple { 0% { opacity: 0.55; transform: scale(1); } 100% { opacity: 0; transform: scale(1.55); } }
+.session-body.nudge { animation: nudge 0.38s; }
+@keyframes nudge { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-6px); } 60% { transform: translateX(5px); } }
+.sheet { animation: sheetin 0.42s cubic-bezier(0.2, 1.25, 0.35, 1); }
+@keyframes sheetin { from { transform: translateY(105%); } }
+.sheet-icon { animation: pop 0.45s 0.08s cubic-bezier(0.2, 1.9, 0.4, 1) backwards; }
+.sheet-icon svg path { stroke-dasharray: 40; stroke-dashoffset: 40; animation: draw 0.38s 0.22s ease-out forwards; }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+.sheet-title strong { animation: risein 0.35s 0.1s backwards; }
+.sheet-word, .sheet .row { animation: risein 0.35s 0.16s backwards; }
+@keyframes risein { from { opacity: 0; transform: translateY(8px); } }
+.rise-in { animation: risein 0.5s 0.25s backwards; }
+.progress { position: relative; }
+.progress-fill { position: relative; overflow: hidden; transition: width 0.4s cubic-bezier(0.2, 0.9, 0.3, 1); }
+.progress-fill .shine { position: absolute; top: 0; bottom: 0; width: 60px; background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.65), transparent); animation: shine 0.7s ease-out forwards; }
+@keyframes shine { from { left: -60px; } to { left: 100%; } }
+.combo { display: inline-flex; align-items: center; gap: 3px; animation: combo 0.45s cubic-bezier(0.2, 1.9, 0.4, 1); }
+.combo svg { fill: #ffd27a; }
+@keyframes combo { 0% { transform: scale(0.4) rotate(-8deg); } 60% { transform: scale(1.25) rotate(3deg); } 100% { transform: scale(1); } }
+.toast { position: fixed; left: 50%; top: 22%; z-index: 60; display: flex; align-items: center; gap: 8px; padding: 12px 22px; border-radius: 99px; background: linear-gradient(135deg, #ff9f1a, #f0595e); color: #fff; font-size: 1.5rem; font-weight: 800; box-shadow: 0 10px 30px rgba(240, 100, 40, 0.45); pointer-events: none; white-space: nowrap; animation: toast 1.5s cubic-bezier(0.2, 1.4, 0.35, 1) forwards; }
+.toast svg { fill: #ffe08a; }
+@keyframes toast { 0% { opacity: 0; transform: translate(-50%, 20px) scale(0.5); } 18% { opacity: 1; transform: translate(-50%, 0) scale(1.08); } 28% { transform: translate(-50%, 0) scale(1); } 78% { opacity: 1; transform: translate(-50%, 0) scale(1); } 100% { opacity: 0; transform: translate(-50%, -26px) scale(0.96); } }
+.intro { animation: cardin 0.5s cubic-bezier(0.2, 1.1, 0.3, 1); transform-origin: 50% 100%; }
+@keyframes cardin { from { opacity: 0; transform: perspective(900px) rotateX(14deg) translateY(30px) scale(0.95); } }
+.intro .wc-word { animation: wordin 0.55s 0.12s cubic-bezier(0.2, 1.4, 0.35, 1) backwards; transform-origin: 0 60%; }
+@keyframes wordin { from { opacity: 0; transform: scale(0.7); } }
+.intro .wc-meaning { animation: risein 0.4s 0.3s backwards; }
+.intro section .wc-list li, .intro section .wc-example { animation: risein 0.38s backwards; }
+.intro section li:nth-child(2), .intro section .wc-example:nth-of-type(2) { animation-delay: 0.1s; }
+.intro section li:nth-child(3) { animation-delay: 0.2s; }
+.intro section li:nth-child(4) { animation-delay: 0.3s; }
+.dots i.on { animation: pop 0.3s cubic-bezier(0.2, 1.9, 0.4, 1); }
+.chip.meaning.done { animation: correct 0.5s cubic-bezier(0.2, 1.6, 0.4, 1); }
+.chip.word { transition: box-shadow 0.15s, border-color 0.15s, background 0.15s; }
+.trophy { font-size: 4.2rem; line-height: 1; animation: trophy 0.9s cubic-bezier(0.2, 1.5, 0.35, 1); }
+.trophy span { display: inline-block; animation: wiggle 2.4s 0.9s ease-in-out infinite; }
+@keyframes trophy { 0% { opacity: 0; transform: scale(0) rotate(-40deg); } 60% { opacity: 1; transform: scale(1.25) rotate(8deg); } 100% { transform: scale(1) rotate(0); } }
+@keyframes wiggle { 0%, 100% { transform: rotate(-6deg); } 50% { transform: rotate(6deg); } }
+.tile-in { animation: tilein 0.5s cubic-bezier(0.2, 1.3, 0.35, 1) backwards; animation-delay: calc(var(--i, 0) * 110ms + 350ms); }
+@keyframes tilein { from { opacity: 0; transform: translateY(22px) scale(0.9); } }
+.flame-in { animation: tilein 0.55s 0.3s cubic-bezier(0.2, 1.5, 0.35, 1) backwards; }
+.streak.lit svg { animation: flicker 1.6s ease-in-out infinite; transform-origin: 50% 90%; }
+@keyframes flicker { 0%, 100% { transform: scale(1) rotate(-2deg); } 30% { transform: scale(1.1, 1.16) rotate(2deg); } 60% { transform: scale(0.97, 1.05) rotate(-1deg); } }
+.btn.primary.big { position: relative; overflow: hidden; }
+.btn.primary.big::after { content: ''; position: absolute; top: 0; bottom: 0; left: -40%; width: 30%; background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.28), transparent); transform: skewX(-18deg); animation: sweep 3.6s 1s ease-in-out infinite; }
+@keyframes sweep { 0%, 70% { left: -40%; } 100% { left: 120%; } }
+.type-input.right { animation: correct 0.5s cubic-bezier(0.2, 1.6, 0.4, 1); }
+.seg-item { transition: transform 0.12s, border-color 0.15s, background 0.15s; }
+.seg-item.active { transform: translateY(-2px); }
+.cloze .gap { vertical-align: baseline; line-height: 1.5; padding: 0 6px; }
+.cloze .gap:not(.filled) { color: var(--muted); }
+.listen-answer { min-height: 3.4rem; display: flex; align-items: flex-end; }
+.listen-answer .pop-in { display: inline-block; }

@@ -46,6 +46,7 @@ export function SettingsView() {
       <section className="card">
         <h2>Ljud</h2>
         <Toggle label="Ljudeffekter" value={s.sound} onChange={(v) => { set({ sound: v }); if (v) setTimeout(() => fx.correct(), 50) }} />
+        <Toggle label="Läs upp nya ord automatiskt" hint="Ordet och exempelmeningarna" value={s.autoSpeak} onChange={(v) => set({ autoSpeak: v })} />
         <Toggle label="Vibration" hint="Fungerar på Android" value={s.haptics} onChange={(v) => set({ haptics: v })} />
       </section>
 
