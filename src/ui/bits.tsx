@@ -1,0 +1,126 @@
+import type { ReactNode } from 'react'
+import { canSpeak, speak } from '../fx'
+import { useStore } from '../store'
+import type { Word } from '../types'
+
+const PATHS: Record<string, string> = {
+  home: 'M3 11.5 12 4l9 7.5M5.5 10v9.5h13V10',
+  list: 'M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01',
+  chart: 'M5 20V11M12 20V4M19 20v-6',
+  gear: 'M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7ZM19 12a7 7 0 0 0-.1-1.3l2-1.5-2-3.4-2.3.9a7 7 0 0 0-2.2-1.3L14 3h-4l-.4 2.4a7 7 0 0 0-2.2 1.3l-2.3-.9-2 3.4 2 1.5a7 7 0 0 0 0 2.6l-2 1.5 2 3.4 2.3-.9a7 7 0 0 0 2.2 1.3L10 21h4l.4-2.4a7 7 0 0 0 2.2-1.3l2.3.9 2-3.4-2-1.5c.1-.4.1-.9.1-1.3Z',
+  sound: 'M4 9.5v5h3.5L12 18V6L7.5 9.5H4ZM15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11',
+  close: 'M6 6l12 12M18 6 6 18',
+  plus: 'M12 5v14M5 12h14',
+  back: 'M15 5l-7 7 7 7',
+  undo: 'M8 5 3.5 9.5 8 14M4 9.5h10a5.5 5.5 0 0 1 0 11h-3',
+  check: 'M5 12.5l4.5 4.5L19 7.5',
+  flame: 'M12 3c1 3.5 5 5.5 5 10.5a5 5 0 0 1-10 0c0-2 1-3.2 2-4 .2 1.6 1 2.4 1.8 2.6C10 9.500 10.500 6 12 3Z',
+}
+
+export function Icon({ name, size = 22 }: { name: keyof typeof PATHS | string; size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d={PATHS[name]} />
+    </svg>
+  )
+}
+
+export function Ja({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <span lang="ja" className={'ja ' + (className ?? '')}>
+      {children}
+    </span>
+  )
+}
+
+export function SpeakButton({ text, small }: { text: string; small?: boolean }) {
+  if (!canSpeak) return null
+  return (
+    <button
+      type="button"
+      className={'icon-btn speak' + (small ? ' small' : '')}
+      aria-label="Lyssna på uttalet"
+      title="Lyssna på uttalet"
+      onClick={(e) => {
+        e.stopPropagation()
+        speak(text)
+      }}
+    >
+      <Icon name="sound" size={small ? 18 : 22} />
+    </button>
+  )
+}
+
+/** Hela ordkortet: ord, läsning, betydelse, nedbrytning, exempel och skillnader. */
+export function WordCard({ word }: { word: Word }) {
+  const showReading = useStore().settings.showExampleReading
+  return (
+    <div className="wordcard">
+      <div className="wc-head">
+        <div>
+          <div className="wc-reading"><Ja>{word.reading}</Ja></div>
+          <div className="wc-word"><Ja>{word.word}</Ja></div>
+        </div>
+        <SpeakButton text={word.word} />
+      </div>
+      <p className="wc-meaning">{word.meaning}</p>
+      {word.breakdown.length > 0 && (
+        <section>
+          <h4>Nedbrytning</h4>
+          <ul className="wc-list">
+            {word.breakdown.map((b, i) => (
+              <li key={i}>
+                <Ja className="strong">{b.kanji}</Ja>
+                {b.reading && <Ja className="muted">（{b.reading}）</Ja>} <span>= {b.meaning}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {word.examples.length > 0 && (
+        <section>
+          <h4>Exempel</h4>
+          {word.examples.map((ex, i) => (
+            <div className="wc-example" key={i}>
+              <div className="wc-ex-ja">
+                <Ja>{ex.ja}</Ja>
+                <SpeakButton text={ex.ja} small />
+              </div>
+              {showReading && ex.reading && <div className="muted"><Ja>{ex.reading}</Ja></div>}
+              <div>{ex.sv}</div>
+            </div>
+          ))}
+        </section>
+      )}
+      {word.distinctions.length > 0 && (
+        <section>
+          <h4>Vanlig skillnad</h4>
+          <ul className="wc-list">
+            {word.distinctions.map((d, i) => (
+              <li key={i}>
+                <Ja className="strong">{d.word}</Ja>
+                {d.reading && <Ja className="muted">（{d.reading}）</Ja>} <span>= {d.meaning}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+    </div>
+  )
+}
+
+export function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}>
+        <header className="modal-head">
+          <h2>{title}</h2>
+          <button className="icon-btn" onClick={onClose} aria-label="Stäng">
+            <Icon name="close" />
+          </button>
+        </header>
+        <div className="modal-body">{children}</div>
+      </div>
+    </div>
+  )
+}
