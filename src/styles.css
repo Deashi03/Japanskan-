@@ -457,3 +457,11 @@ ruby.furi.sent rt { font-size: 0.5em; line-height: 1.4; }
 .pick.on { color: var(--accent-ink); background: var(--accent); }
 .pick:not(.on):hover { background: var(--surface-2); color: var(--accent); }
 ruby.furi.sent rt { font-size: 0.56em; }
+
+/* Innehållet i ett pass ska aldrig tryckas ihop: blir det för högt rullar sidan i stället,
+   och rutan runt ett nytt ord växer med sitt innehåll. */
+.session-body > * { flex: none; }
+.session-top { flex-wrap: wrap; row-gap: 2px; background: var(--bg); z-index: 2; }
+.combo-row { flex-basis: 100%; height: 18px; display: flex; justify-content: flex-end; padding-right: 2px; }
+.combo { position: static; }
+.session-body { padding-top: 8px; }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { canSpeak, confetti, fx, speak, stopSpeaking } from '../fx'
+import { canSpeak, confetti, fx, speak, speakAll, stopSpeaking } from '../fx'
 import { afterIntro, buildExercise, buildQueue, extraQueue, nextFresh, requeue, shuffle, type Exercise, type QItem } from '../session'
 import { autoRating, exercisesFor, formatDue, knownCard, newCard, pickExercise, schedule, State } from '../srs'
 import { computeStats } from '../stats'
@@ -140,7 +140,7 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
       fx.reveal()
       // Exempelmeningarna läses upp när de visas. Det sker här, i själva knapptryckningen,
       // eftersom iPhone bara tillåter uppläsning som startas av en tryckning.
-      if (parts[introStep] === 'examples' && getSnap().settings.autoSpeak) speak(...turn.word.examples.map((e) => e.ja))
+      if (parts[introStep] === 'examples' && getSnap().settings.autoSpeak) speakAll(turn.word.examples.map((e) => e.ja), 1500)
       else stopSpeaking()
       return setIntroStep(introStep + 1)
     }
@@ -275,7 +275,9 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
           </div>
         </div>
         <span className="clock">{clock}</span>
-        {tally.combo >= 2 && <span className="combo" key={tally.combo}><Icon name="flame" size={14} /> {tally.combo} i rad</span>}
+        <div className="combo-row">
+          {tally.combo >= 2 && <span className="combo" key={tally.combo}><Icon name="flame" size={14} /> {tally.combo} i rad</span>}
+        </div>
       </header>
 
       {toast && <div className="toast" key={toast.id} onAnimationEnd={() => setToast(null)}><Icon name="flame" size={28} /> {toast.text}</div>}

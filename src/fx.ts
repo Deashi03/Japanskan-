@@ -260,22 +260,51 @@ if (typeof speechSynthesis !== 'undefined') {
 
 export const canSpeak = typeof speechSynthesis !== 'undefined'
 
-/** Läser upp en eller flera japanska texter i följd. Avbryter det som eventuellt redan läses. */
-export function speak(...texts: string[]) {
-  if (!canSpeak) return
-  speechSynthesis.cancel()
+// Ökar för varje ny uppläsning, så att en väntande fortsättning vet om den har blivit avbruten.
+let speechRun = 0
+
+function utter(text: string): SpeechSynthesisUtterance {
+  const u = new SpeechSynthesisUtterance(text)
+  u.lang = 'ja-JP'
   const v = voices.find((v) => v.lang.replace('_', '-').startsWith('ja'))
-  for (const text of texts) {
-    if (!text) continue
-    const u = new SpeechSynthesisUtterance(text)
-    u.lang = 'ja-JP'
-    if (v) u.voice = v
-    u.rate = 0.9
+  if (v) u.voice = v
+  u.rate = 0.9
+  return u
+}
+
+/** Läser upp en japansk text. Avbryter det som eventuellt redan läses. */
+export function speak(text: string) {
+  speakAll([text])
+}
+
+/** Läser upp flera texter i följd med en paus emellan. Nästa text startar först när den
+ *  förra har lästs klart och pausen har gått; en ny uppläsning eller `stopSpeaking`
+ *  avbryter resten. */
+export function speakAll(texts: string[], gapMs = 1500) {
+  if (!canSpeak) return
+  const run = ++speechRun
+  speechSynthesis.cancel()
+  const queue = texts.filter(Boolean)
+  const next = (i: number) => {
+    if (run !== speechRun || i >= queue.length) return
+    const u = utter(queue[i])
+    if (i + 1 < queue.length) {
+      let done = false
+      const after = () => {
+        if (done) return
+        done = true
+        setTimeout(() => next(i + 1), gapMs)
+      }
+      u.onend = after
+      u.onerror = after
+    }
     speechSynthesis.speak(u)
   }
+  next(0)
 }
 
 export function stopSpeaking() {
+  speechRun++
   if (canSpeak) speechSynthesis.cancel()
 }
 
