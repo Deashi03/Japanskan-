@@ -133,7 +133,7 @@ export async function signIn(email: string, password: string): Promise<string | 
 /** Returnerar ett meddelande att visa (fel eller "kolla din mejl"), eller null om man loggades in direkt. */
 export async function signUp(email: string, password: string): Promise<string | null> {
   if (!client) return 'Synk är inte konfigurerad.'
-  const { data, error } = await client.auth.signUp({ email, password })
+  const { data, error } = await client.auth.signUp({ email, password, options: { emailRedirectTo: location.origin + location.pathname } })
   if (error) return tr(error.message)
   return data.session ? null : 'Konto skapat. Bekräfta via länken i mejlet och logga sedan in.'
 }
