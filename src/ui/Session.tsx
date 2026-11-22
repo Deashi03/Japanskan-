@@ -6,13 +6,19 @@ import { computeStats } from '../stats'
 import { actions, getSnap, uid } from '../store'
 import { syncNow } from '../sync'
 import type { CardData, LogData, Word } from '../types'
-import { Icon, Ja, SpeakButton, WordCard } from './bits'
+import { Icon, Ja, SpeakButton, WordBreakdown, WordDistinctions, WordExamples, WordHead } from './bits'
 import { Matching, MultipleChoice, Typing, type Result } from './Exercises'
 
 const PRAISE = ['Rätt!', 'Snyggt!', 'Precis!', 'Bra jobbat!', 'いいね！', 'Perfekt!', 'すごい！']
 
 interface Tally { answered: number; correct: number; newWords: number; combo: number; bestCombo: number }
-interface Feedback { correct: boolean; title: string; words: Word[]; nextDue?: number }
+interface Feedback { correct: boolean; title: string; words: Word[]; nextDue?: number; canOverride?: boolean }
+type IntroPart = 'breakdown' | 'examples' | 'distinctions'
+const introParts = (w: Word): IntroPart[] => [
+  ...(w.breakdown.length ? ['breakdown' as const] : []),
+  ...(w.examples.length ? ['examples' as const] : []),
+  ...(w.distinctions.length ? ['distinctions' as const] : []),
+]
 interface Undo { queue: QItem[]; cards: [string, CardData][]; logIds: string[]; tally: Tally }
 
 type Turn =
@@ -37,11 +43,11 @@ function makeTurn(queue: QItem[]): Turn {
           const c = snap.cards.get(q.wordId)
           const w = snap.words.get(q.wordId)
           return q.kind === 'quiz' && !!q.extra === !!item.extra && w && !w.suspended && q.wordId !== item.wordId
-            && arr.findIndex((o) => o.wordId === q.wordId) === i && (item.extra || (c && c.state !== State.Review && c.state !== State.New))
+            && arr.findIndex((o) => o.wordId === q.wordId) === i && (item.extra || (c && c.state === State.Learning && pickExercise(w, c) === 'match'))
         }).slice(0, 3)
       : []
   const all = [...snap.words.values()]
-  const exercise = buildExercise(type, word, all, partnerItems.map((q) => snap.words.get(q.wordId)!))
+  const exercise = buildExercise(type, word, all, partnerItems.map((q) => snap.words.get(q.wordId)!), Math.random, new Set(snap.cards.keys()))
   const items = exercise.type === 'match' ? [item, ...partnerItems.filter((q) => exercise.graded.includes(q.wordId))] : [item]
   return { kind: 'quiz', item, exercise, items }
 }
@@ -56,7 +62,9 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
   const [tally, setTally] = useState<Tally>({ answered: 0, correct: 0, newWords: 0, combo: 0, bestCombo: 0 })
   const [feedback, setFeedback] = useState<Feedback | null>(null)
   const [extraMode, setExtraMode] = useState(false)
+  const [introStep, setIntroStep] = useState(0)
   const undo = useRef<Undo | null>(null)
+  const lastAnswer = useRef<{ results: Result[]; ms: number } | null>(null)
   const elapsedRef = useRef(0)
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -89,6 +97,7 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
     if (elapsedRef.current >= total) return finish()
     setQueue(nextQueue)
     setFeedback(null)
+    setIntroStep(0)
     setPhase('question')
     setTurnNo((n) => n + 1)
   }
@@ -108,6 +117,11 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
 
   async function introDone() {
     if (turn?.kind !== 'intro') return
+    // Visa ordkortet en del i taget; först efter sista delen börjar frågorna.
+    if (introStep < introParts(turn.word).length) {
+      fx.tap()
+      return setIntroStep(introStep + 1)
+    }
     const now = Date.now()
     if (!getSnap().cards.has(turn.word.id)) {
       await actions.saveCard(turn.word.id, newCard(now))
@@ -117,8 +131,10 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
     advance(afterIntro(queue, turn.item))
   }
 
-  function onResult(results: Result[], ms: number) {
+  function onResult(results: Result[], ms: number, base: { queue: QItem[]; tally: Tally } = { queue, tally }) {
     if (turn?.kind !== 'quiz') return
+    const { queue, tally } = base
+    lastAnswer.current = { results, ms }
     const snap = getSnap()
     const now = Date.now()
     const type = turn.exercise.type
@@ -168,6 +184,7 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
       title: allCorrect ? PRAISE[Math.floor(Math.random() * PRAISE.length)] : type === 'match' ? 'Öva lite mer på' : 'Inte riktigt',
       words: type === 'match' && allCorrect ? [] : words,
       nextDue: allCorrect ? nextDue : undefined,
+      canOverride: !allCorrect && type === 'type_sv',
     })
     setPhase('feedback')
   }
@@ -182,6 +199,16 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
     setFeedback(null)
     setPhase('question')
     setAttempt((a) => a + 1)
+  }
+
+  /** "Jag hade rätt": det svenska svaret betydde samma sak fast med andra ord. */
+  function overrideCorrect() {
+    const u = undo.current
+    const last = lastAnswer.current
+    if (!u || !last) return
+    undo.current = null
+    void actions.apply({ cards: u.cards, logs: u.logIds.map((id) => [id, null]) })
+    onResult(last.results.map((r) => ({ ...r, correct: true })), last.ms, { queue: u.queue, tally: u.tally })
   }
 
   // Enter = fortsätt.
@@ -217,12 +244,28 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
 
       <div className="session-body">
         {extraMode && <div className="notice slim">Extra övning – påverkar inte schemat</div>}
-        {turn?.kind === 'intro' && (
-          <div className="intro pop-in" key={'i' + turnNo}>
-            <span className="tag">Nytt ord</span>
-            <WordCard word={turn.word} />
-          </div>
-        )}
+        {turn?.kind === 'intro' && (() => {
+          const parts = introParts(turn.word)
+          const part = parts[introStep - 1]
+          return (
+            <div className="intro pop-in" key={'i' + turnNo}>
+              <div className="intro-top">
+                <span className="tag">Nytt ord</span>
+                <span className="dots" aria-label={`Del ${introStep + 1} av ${parts.length + 1}`}>
+                  {Array.from({ length: parts.length + 1 }, (_, i) => <i key={i} className={i <= introStep ? 'on' : ''} />)}
+                </span>
+              </div>
+              <div className="wordcard">
+                <WordHead word={turn.word} />
+                <div className="pop-in" key={introStep}>
+                  {part === 'breakdown' && <WordBreakdown word={turn.word} />}
+                  {part === 'examples' && <WordExamples word={turn.word} />}
+                  {part === 'distinctions' && <WordDistinctions word={turn.word} />}
+                </div>
+              </div>
+            </div>
+          )
+        })()}
         {turn?.kind === 'quiz' && (
           <div className="pop-in" key={turnNo + ':' + attempt}>
             {'options' in turn.exercise ? (
@@ -238,7 +281,7 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
 
       {turn?.kind === 'intro' && phase === 'question' && (
         <footer className="session-foot">
-          <button className="btn primary big" onClick={() => void introDone()}>Fortsätt</button>
+          <button className="btn primary big" onClick={() => void introDone()}>{introStep < introParts(turn.word).length ? 'Nästa' : 'Börja öva'}</button>
         </footer>
       )}
 
@@ -258,10 +301,11 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
               <SpeakButton text={w.word} small />
             </div>
           ))}
-          <div className="row">
+          <div className={'row' + (feedback.canOverride ? ' sheet-actions' : '')}>
             <button className="btn ghost" onClick={undoLast} title="Ångra svaret och försök igen">
               <Icon name="undo" size={18} /> Ångra
             </button>
+            {feedback.canOverride && <button className="btn ghost" onClick={overrideCorrect}>Jag hade rätt</button>}
             <button className="btn primary grow" onClick={() => advance(queue)}>Fortsätt</button>
           </div>
         </footer>
