@@ -29,7 +29,7 @@ export function WordList({ onImport }: { onImport: () => void }) {
     return [...snap.words.values()]
       .filter((w) => {
         if (list && w.list !== list) return false
-        if (q && !(w.word.includes(q) || w.reading.includes(q) || w.meaning.toLowerCase().includes(q))) return false
+        if (q && !(w.word.includes(q) || w.reading.includes(q) || w.meaning.toLowerCase().includes(q) || w.synonyms?.some((x) => x.toLowerCase().includes(q)))) return false
         const c = snap.cards.get(w.id)
         const s = statusOf(c)
         if (filter === 'new') return s === 'new'
@@ -111,6 +111,7 @@ export function WordList({ onImport }: { onImport: () => void }) {
       {open && !editing && (
         <Modal title="Ord" onClose={() => setOpenId(null)}>
           <WordCard word={open} />
+          {!!open.synonyms?.length && <p className="synonyms"><span>Godkänns också:</span> {open.synonyms.join(', ')}</p>}
           <dl className="meta">
             <div><dt>Status</dt><dd>{open.suspended ? 'Pausat' : STATUS_LABEL[statusOf(openCard)]}{isProblem(openCard) ? ' · problemord' : ''}</dd></div>
             <div><dt>Nästa repetition</dt><dd>{open.suspended ? '–' : openCard && statusOf(openCard) !== 'new' ? formatDue(openCard.due, now) : 'inte påbörjat'}</dd></div>
@@ -169,6 +170,7 @@ function Rows<T extends Record<string, string>>({ title, rows, fields, onChange 
 
 function WordEditor({ word, onSave, onClose }: { word: Word; onSave: (w: Word) => void; onClose: () => void }) {
   const [w, setW] = useState(word)
+  const [synonyms, setSynonyms] = useState((word.synonyms ?? []).join(', '))
   const valid = w.word.trim() && w.reading.trim() && w.meaning.trim()
   return (
     <Modal title="Redigera ord" onClose={onClose}>
@@ -182,6 +184,7 @@ function WordEditor({ word, onSave, onClose }: { word: Word; onSave: (w: Word) =
             word: w.word.trim(),
             reading: w.reading.trim(),
             meaning: w.meaning.trim(),
+            synonyms: [...new Set(synonyms.split(/[,\n]/).map((x) => x.trim()).filter(Boolean))],
             breakdown: w.breakdown.filter((b) => b.kanji.trim() && b.meaning.trim()),
             examples: w.examples.filter((x) => x.ja.trim() && x.sv.trim()),
             distinctions: w.distinctions.filter((d) => d.word.trim() && d.meaning.trim()),
@@ -191,6 +194,10 @@ function WordEditor({ word, onSave, onClose }: { word: Word; onSave: (w: Word) =
         <label className="field"><span>Ord</span><input lang="ja" value={w.word} onChange={(e) => setW({ ...w, word: e.target.value })} /></label>
         <label className="field"><span>Läsning</span><input lang="ja" value={w.reading} onChange={(e) => setW({ ...w, reading: e.target.value })} /></label>
         <label className="field"><span>Betydelse</span><textarea rows={2} value={w.meaning} onChange={(e) => setW({ ...w, meaning: e.target.value })} /></label>
+        <label className="field">
+          <span>Synonymer (godkända svar, åtskilda med komma)</span>
+          <textarea rows={2} value={synonyms} onChange={(e) => setSynonyms(e.target.value)} />
+        </label>
         <label className="field"><span>Lista</span><input value={w.list} onChange={(e) => setW({ ...w, list: e.target.value })} /></label>
         <Rows<Breakdown & Record<string, string>> title="Nedbrytning" rows={w.breakdown as never} fields={[['kanji', 'Kanji'], ['reading', 'Läsning'], ['meaning', 'Betydelse']]} onChange={(breakdown) => setW({ ...w, breakdown })} />
         <Rows<Example & Record<string, string>> title="Exempel" rows={w.examples as never} fields={[['ja', 'Japanska'], ['reading', 'Läsning'], ['sv', 'Svenska']]} onChange={(examples) => setW({ ...w, examples })} />

@@ -9,6 +9,7 @@ export const AI_PROMPT = `Du ska skapa en ordlista för appen "Japanskan". Jag g
       "word": "冤罪",
       "reading": "えんざい",
       "meaning": "Felaktig dom / att bli oskyldigt anklagad eller dömd för ett brott.",
+      "synonyms": ["oskyldigt dömd", "justitiemord", "falsk anklagelse"],
       "breakdown": [
         { "kanji": "冤", "reading": "えん", "meaning": "falsk anklagelse, orättvisa" },
         { "kanji": "罪", "reading": "ざい", "meaning": "brott, skuld" }
@@ -45,6 +46,7 @@ export interface ParsedWord {
   breakdown: Breakdown[]
   examples: Example[]
   distinctions: Distinction[]
+  synonyms: string[]
 }
 
 export interface ParseResult {
@@ -113,24 +115,41 @@ export function parseWordFile(text: string): ParseResult {
       breakdown: breakdown ?? [],
       examples: examples ?? [],
       distinctions: distinctions ?? [],
+      synonyms: Array.isArray(o.synonyms) ? [...new Set(o.synonyms.map(str).filter(Boolean))] : [],
     })
   })
   if (!words.length && !errors.length) errors.push('Filen innehåller inga ord.')
   return { words, errors }
 }
 
-/** Delar upp i nya ord och dubbletter (samma ord finns redan, eller två gånger i filen). */
+/** Delar upp i nya ord och dubbletter (samma ord finns redan, eller två gånger i filen).
+ *  Ord som redan finns ändras aldrig, med ett undantag: de får de synonymer filen har
+ *  och som de saknar. Det rör bara ordets text, aldrig framstegen. */
 export function splitDuplicates(parsed: ParsedWord[], existing: Iterable<Word>) {
-  const seen = new Set<string>()
-  for (const w of existing) seen.add(w.word)
+  const byWord = new Map<string, Word>()
+  for (const w of existing) byWord.set(w.word, w)
+  const seen = new Set<string>(byWord.keys())
   const fresh: ParsedWord[] = []
   const duplicates: ParsedWord[] = []
+  const updates: Word[] = []
   for (const p of parsed) {
-    if (seen.has(p.word)) duplicates.push(p)
-    else {
+    if (!seen.has(p.word)) {
       seen.add(p.word)
       fresh.push(p)
+      continue
+    }
+    duplicates.push(p)
+    const old = byWord.get(p.word)
+    if (!old) continue
+    const have = new Set(old.synonyms ?? [])
+    const added = p.synonyms.filter((x) => !have.has(x))
+    if (added.length) {
+      const next = { ...old, synonyms: [...(old.synonyms ?? []), ...added] }
+      byWord.set(p.word, next)
+      const i = updates.findIndex((u) => u.id === old.id)
+      if (i >= 0) updates[i] = next
+      else updates.push(next)
     }
   }
-  return { fresh, duplicates }
+  return { fresh, duplicates, updates }
 }

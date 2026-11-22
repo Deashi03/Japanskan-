@@ -9,7 +9,7 @@ export function ImportView({ onClose }: { onClose: () => void }) {
   const [text, setText] = useState('')
   const [listName, setListName] = useState(() => 'Lista ' + new Date().toLocaleDateString('sv-SE'))
   const [copied, setCopied] = useState(false)
-  const [done, setDone] = useState<number | null>(null)
+  const [done, setDone] = useState<{ added: number; updated: number } | null>(null)
 
   const result = useMemo(() => (text.trim() ? parseWordFile(text) : null), [text])
   const split = useMemo(() => (result ? splitDuplicates(result.words, snap.words.values()) : null), [result, snap.words])
@@ -31,11 +31,12 @@ export function ImportView({ onClose }: { onClose: () => void }) {
   }
 
   async function doImport() {
-    if (!split?.fresh.length) return
+    if (!split || (!split.fresh.length && !split.updates.length)) return
     const now = Date.now()
     const words: Word[] = split.fresh.map((p, i) => ({ ...p, id: uid(), list: listName.trim() || 'Lista', createdAt: now, order: i }))
-    await actions.saveWords(words)
-    setDone(words.length)
+    // Befintliga ord får bara nya synonymer; kort och framsteg rörs inte.
+    await actions.saveWords([...words, ...split.updates])
+    setDone({ added: words.length, updated: split.updates.length })
   }
 
   if (done !== null)
@@ -43,7 +44,8 @@ export function ImportView({ onClose }: { onClose: () => void }) {
       <Modal title="Importera ord" onClose={onClose}>
         <div className="center">
           <p className="big-emoji">🎉</p>
-          <p><strong>{done} ord</strong> har lagts till. De introduceras några i taget i dina kommande pass.</p>
+          {done.added > 0 && <p><strong>{done.added} ord</strong> har lagts till. De introduceras några i taget i dina kommande pass.</p>}
+          {done.updated > 0 && <p><strong>{done.updated} ord</strong> som du redan hade har fått fler godkända svar (synonymer). Dina framsteg är orörda.</p>}
           <button className="btn primary" onClick={onClose}>Klar</button>
         </div>
       </Modal>
@@ -72,8 +74,13 @@ export function ImportView({ onClose }: { onClose: () => void }) {
             )}
             {split.duplicates.length > 0 && (
               <div className="notice">
-                {split.duplicates.length} ord finns redan och hoppas över: <Ja>{split.duplicates.map((d) => d.word).join('、')}</Ja>
+                {split.duplicates.length} ord finns redan och läggs inte till igen
+                {split.duplicates.length <= 12 && <>: <Ja>{split.duplicates.map((d) => d.word).join('、')}</Ja></>}.
+                {split.updates.length > 0 && <> {split.updates.length} av dem får nya synonymer från filen – framstegen påverkas inte.</>}
               </div>
+            )}
+            {split.fresh.length === 0 && split.updates.length > 0 && (
+              <button className="btn primary big" onClick={doImport}>Lägg till synonymer för {split.updates.length} ord</button>
             )}
             {split.fresh.length > 0 && (
               <>

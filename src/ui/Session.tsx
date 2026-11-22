@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { confetti, fx } from '../fx'
-import { afterIntro, buildExercise, buildQueue, extraQueue, requeue, shuffle, type Exercise, type QItem } from '../session'
-import { autoRating, exercisesFor, formatDue, newCard, pickExercise, schedule, State } from '../srs'
+import { canSpeak, confetti, fx, speak, stopSpeaking } from '../fx'
+import { afterIntro, buildExercise, buildQueue, extraQueue, nextFresh, requeue, shuffle, type Exercise, type QItem } from '../session'
+import { autoRating, exercisesFor, formatDue, knownCard, newCard, pickExercise, schedule, State } from '../srs'
 import { computeStats } from '../stats'
 import { actions, getSnap, uid } from '../store'
 import { syncNow } from '../sync'
 import type { CardData, LogData, Word } from '../types'
 import { Icon, Ja, SpeakButton, WordBreakdown, WordDistinctions, WordExamples, WordHead } from './bits'
-import { Matching, MultipleChoice, Typing, type Result } from './Exercises'
+import { Cloze, Matching, MultipleChoice, Sentence, Typing, type Result } from './Exercises'
 
 const PRAISE = ['Rätt!', 'Snyggt!', 'Precis!', 'Bra jobbat!', 'いいね！', 'Perfekt!', 'すごい！']
 
@@ -47,7 +47,11 @@ function makeTurn(queue: QItem[]): Turn {
         }).slice(0, 3)
       : []
   const all = [...snap.words.values()]
-  const exercise = buildExercise(type, word, all, partnerItems.map((q) => snap.words.get(q.wordId)!), Math.random, new Set(snap.cards.keys()))
+  const exercise = buildExercise(type, word, all, {
+    partners: partnerItems.map((q) => snap.words.get(q.wordId)!),
+    known: new Set(snap.cards.keys()),
+    canListen: canSpeak,
+  })
   const items = exercise.type === 'match' ? [item, ...partnerItems.filter((q) => exercise.graded.includes(q.wordId))] : [item]
   return { kind: 'quiz', item, exercise, items }
 }
@@ -63,6 +67,8 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
   const [feedback, setFeedback] = useState<Feedback | null>(null)
   const [extraMode, setExtraMode] = useState(false)
   const [introStep, setIntroStep] = useState(0)
+  const [known, setKnown] = useState(0)
+  const [toast, setToast] = useState<{ id: number; text: string } | null>(null)
   const undo = useRef<Undo | null>(null)
   const lastAnswer = useRef<{ results: Result[]; ms: number } | null>(null)
   const elapsedRef = useRef(0)
@@ -86,7 +92,8 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
   }, [phase])
 
   const finish = () => {
-    if (tally.answered === 0 && tally.newWords === 0) return onExit()
+    stopSpeaking()
+    if (tally.answered === 0 && tally.newWords === 0 && known === 0) return onExit()
     setPhase('summary')
     fx.complete()
     confetti()
@@ -96,11 +103,21 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
   const advance = (nextQueue: QItem[]) => {
     if (elapsedRef.current >= total) return finish()
     setQueue(nextQueue)
+    stopSpeaking()
     setFeedback(null)
     setIntroStep(0)
     setPhase('question')
     setTurnNo((n) => n + 1)
+    fx.whoosh()
   }
+
+  // Ett nytt ord presenteras: liten fanfar och uppläsning av ordet.
+  useEffect(() => {
+    if (turn?.kind !== 'intro') return
+    fx.newWord()
+    if (getSnap().settings.autoSpeak) speak(turn.word.word)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [turnNo])
 
   // Tom kö: fyll på med extra övning, eller avsluta om det inte finns något att öva på.
   useEffect(() => {
@@ -118,8 +135,13 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
   async function introDone() {
     if (turn?.kind !== 'intro') return
     // Visa ordkortet en del i taget; först efter sista delen börjar frågorna.
-    if (introStep < introParts(turn.word).length) {
-      fx.tap()
+    const parts = introParts(turn.word)
+    if (introStep < parts.length) {
+      fx.reveal()
+      // Exempelmeningarna läses upp när de visas. Det sker här, i själva knapptryckningen,
+      // eftersom iPhone bara tillåter uppläsning som startas av en tryckning.
+      if (parts[introStep] === 'examples' && getSnap().settings.autoSpeak) speak(...turn.word.examples.map((e) => e.ja))
+      else stopSpeaking()
       return setIntroStep(introStep + 1)
     }
     const now = Date.now()
@@ -127,8 +149,19 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
       await actions.saveCard(turn.word.id, newCard(now))
       setTally((t) => ({ ...t, newWords: t.newWords + 1 }))
     }
-    fx.tap()
     advance(afterIntro(queue, turn.item))
+  }
+
+  /** "Kan redan": ordet hoppar över inlärningen och läggs direkt bland orden som repeteras.
+   *  I stället presenteras nästa nya ord, så passet får lika många nya ord som vanligt. */
+  async function markKnown() {
+    if (turn?.kind !== 'intro') return
+    const rest = queue.filter((q) => q !== turn.item)
+    const replacement = nextFresh(getSnap(), queue)
+    await actions.saveCard(turn.word.id, knownCard(Date.now()))
+    fx.pop(2)
+    setKnown((k) => k + 1)
+    advance(replacement ? [{ wordId: replacement.id, kind: 'intro' }, ...rest] : rest)
   }
 
   function onResult(results: Result[], ms: number, base: { queue: QItem[]; tally: Tally } = { queue, tally }) {
@@ -171,6 +204,7 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
     const combo = allCorrect ? tally.combo + 1 : 0
     if (allCorrect) fx.correct(tally.combo)
     else if (type !== 'match') fx.wrong()
+    if (allCorrect && combo >= 5 && combo % 5 === 0) setToast({ id: Date.now(), text: `${combo} i rad!` })
     setTally({
       ...tally,
       answered: tally.answered + results.length,
@@ -224,7 +258,7 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
     return () => window.removeEventListener('keydown', onKey)
   })
 
-  if (phase === 'summary') return <Summary tally={tally} elapsed={elapsed} onExit={onExit} />
+  if (phase === 'summary') return <Summary tally={tally} known={known} elapsed={elapsed} onExit={onExit} />
 
   const left = Math.max(0, total - elapsed)
   const clock = `${Math.floor(left / 60_000)}:${String(Math.floor((left % 60_000) / 1000)).padStart(2, '0')}`
@@ -236,13 +270,16 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
           <Icon name="close" />
         </button>
         <div className="progress" role="progressbar" aria-label="Tid" aria-valuenow={Math.round((elapsed / total) * 100)} aria-valuemin={0} aria-valuemax={100}>
-          <div className="progress-fill" style={{ width: `${Math.min(100, (elapsed / total) * 100)}%` }} />
+          <div className="progress-fill" style={{ width: `${Math.min(100, (elapsed / total) * 100)}%` }}>
+            {tally.combo > 0 && <i className="shine" key={tally.answered} />}
+          </div>
         </div>
         <span className="clock">{clock}</span>
-        {tally.combo >= 2 && <span className="combo" key={tally.combo}>{tally.combo} i rad</span>}
+        {tally.combo >= 2 && <span className="combo" key={tally.combo}><Icon name="flame" size={14} /> {tally.combo} i rad</span>}
       </header>
 
-      <div className="session-body">
+      {toast && <div className="toast" key={toast.id} onAnimationEnd={() => setToast(null)}><Icon name="flame" size={28} /> {toast.text}</div>}
+      <div className={'session-body' + (phase === 'feedback' && feedback && !feedback.correct ? ' nudge' : '')}>
         {extraMode && <div className="notice slim">Extra övning – påverkar inte schemat</div>}
         {turn?.kind === 'intro' && (() => {
           const parts = introParts(turn.word)
@@ -268,19 +305,25 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
         })()}
         {turn?.kind === 'quiz' && (
           <div className="pop-in" key={turnNo + ':' + attempt}>
-            {'options' in turn.exercise ? (
-              <MultipleChoice ex={turn.exercise} onDone={onResult} />
-            ) : turn.exercise.type === 'match' ? (
-              <Matching ex={turn.exercise} onDone={onResult} />
-            ) : (
-              <Typing ex={turn.exercise} onDone={onResult} />
-            )}
+            {(() => {
+              const ex = turn.exercise
+              if (ex.type === 'match') return <Matching ex={ex} onDone={onResult} />
+              if (ex.type === 'sentence') return <Sentence ex={ex} onDone={onResult} />
+              if (ex.type === 'cloze') return <Cloze ex={ex} onDone={onResult} />
+              if (ex.type === 'type_sv' || ex.type === 'type_from_sv') return <Typing ex={ex as Extract<Exercise, { type: 'type_sv' | 'type_from_sv' }>} onDone={onResult} />
+              return <MultipleChoice ex={ex as Extract<Exercise, { type: 'mc_ja_sv' | 'mc_sv_ja' | 'listen' }>} onDone={onResult} />
+            })()}
           </div>
         )}
       </div>
 
       {turn?.kind === 'intro' && phase === 'question' && (
         <footer className="session-foot">
+          {introStep === 0 && (
+            <button className="btn ghost known-btn" onClick={() => void markKnown()}>
+              <Icon name="check" size={18} /> Jag kan redan det här ordet
+            </button>
+          )}
           <button className="btn primary big" onClick={() => void introDone()}>{introStep < introParts(turn.word).length ? 'Nästa' : 'Börja öva'}</button>
         </footer>
       )}
@@ -314,21 +357,47 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
   )
 }
 
-function Summary({ tally, elapsed, onExit }: { tally: Tally; elapsed: number; onExit: () => void }) {
+/** Räknar upp ett tal från noll – ger sammanfattningen lite liv. */
+function CountUp({ to, suffix = '', delay = 0 }: { to: number; suffix?: string; delay?: number }) {
+  const [n, setN] = useState(0)
+  useEffect(() => {
+    let raf = 0
+    const start = performance.now() + delay
+    const tick = (t: number) => {
+      const k = Math.min(1, Math.max(0, (t - start) / 700))
+      setN(Math.round(to * (1 - Math.pow(1 - k, 3))))
+      if (k < 1) raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [to, delay])
+  return <>{n}{suffix}</>
+}
+
+function Summary({ tally, known, elapsed, onExit }: { tally: Tally; known: number; elapsed: number; onExit: () => void }) {
   const stats = useMemo(() => computeStats(getSnap(), Date.now()), [])
   const acc = tally.answered ? Math.round((tally.correct / tally.answered) * 100) : 100
+  const tiles: [number, string, string][] = [
+    [tally.answered, '', 'svar'],
+    [acc, '%', 'rätt'],
+    [tally.newWords, '', 'nya ord'],
+    [Math.max(1, Math.round(elapsed / 60_000)), '', 'minuter'],
+  ]
   return (
     <div className="session summary">
       <div className="session-body center">
-        <p className="big-emoji pop-in">🎉</p>
-        <h1>Passet är klart!</h1>
-        <div className="streak lit big"><Icon name="flame" size={30} /><strong>{stats.current}</strong><span>{stats.current === 1 ? 'dag i rad' : 'dagar i rad'}</span></div>
+        <div className="trophy"><span>🎉</span></div>
+        <h1 className="rise-in">Passet är klart!</h1>
+        <div className="streak lit big flame-in"><Icon name="flame" size={30} /><strong><CountUp to={stats.current} delay={500} /></strong><span>{stats.current === 1 ? 'dag i rad' : 'dagar i rad'}</span></div>
         <div className="tiles two">
-          <div className="tile"><strong>{tally.answered}</strong><span>svar</span></div>
-          <div className="tile"><strong>{acc}%</strong><span>rätt</span></div>
-          <div className="tile"><strong>{tally.newWords}</strong><span>nya ord</span></div>
-          <div className="tile"><strong>{Math.max(1, Math.round(elapsed / 60_000))}</strong><span>minuter</span></div>
+          {tiles.map(([value, suffix, label], i) => (
+            <div className="tile tile-in" style={{ '--i': i } as React.CSSProperties} key={label}>
+              <strong><CountUp to={value} suffix={suffix} delay={300 + i * 120} /></strong>
+              <span>{label}</span>
+            </div>
+          ))}
         </div>
+        {known > 0 && <p className="muted">{known} ord markerade som ”kan redan”</p>}
         {tally.bestCombo >= 3 && <p className="muted">Längsta svit: {tally.bestCombo} rätt i rad</p>}
       </div>
       <footer className="session-foot">

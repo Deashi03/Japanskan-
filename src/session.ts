@@ -1,7 +1,7 @@
 import { toHiragana, toKana } from 'wanakana'
 import type { Snapshot } from './store'
 import { isProblem, State } from './srs'
-import type { ExerciseType, Word } from './types'
+import type { Example, ExerciseType, Word } from './types'
 import { dayKey } from './stats'
 
 export interface QItem {
@@ -29,7 +29,7 @@ export function newQuota(snap: Snapshot, now: number): number {
   if (dailyNewCap <= 0) return newPerSession
   const today = dayKey(now)
   let introducedToday = 0
-  for (const c of snap.cards.values()) if (dayKey(c.introducedAt) === today) introducedToday++
+  for (const c of snap.cards.values()) if (!c.known && dayKey(c.introducedAt) === today) introducedToday++
   return Math.max(0, Math.min(newPerSession, dailyNewCap - introducedToday))
 }
 
@@ -67,6 +67,14 @@ export function buildQueue(snap: Snapshot, now: number): QItem[] {
 }
 
 const isNewPhase = (q: QItem) => q.kind === 'intro' || !!q.learning
+
+/** Nästa nya ord som inte redan ligger i kön – används när man markerar ett ord som "kan redan". */
+export function nextFresh(snap: Snapshot, queue: QItem[]): Word | undefined {
+  const queued = new Set(queue.map((q) => q.wordId))
+  return [...snap.words.values()]
+    .filter((w) => !w.suspended && !snap.cards.has(w.id) && !queued.has(w.id))
+    .sort(byOrder)[0]
+}
 
 /** Efter ett introduktionskort kommer ordets första fråga ett steg senare. */
 export function afterIntro(queue: QItem[], item: QItem): QItem[] {
@@ -110,31 +118,63 @@ export function extraQueue(snap: Snapshot, rnd: () => number = Math.random): QIt
 }
 
 export type Exercise =
-  | { type: 'mc_ja_sv' | 'mc_sv_ja'; word: Word; options: Word[] }
+  | { type: 'mc_ja_sv' | 'mc_sv_ja' | 'listen'; word: Word; options: Word[] }
+  | { type: 'sentence'; word: Word; example: Example; choices: string[] }
+  | { type: 'cloze'; word: Word; example: Example; before: string; after: string; options: Word[] }
   | { type: 'type_sv' | 'type_from_sv'; word: Word }
   | { type: 'match'; word: Word; words: Word[]; graded: string[] }
 
-/** Bygger en övning. Faller tillbaka på en enklare typ om det finns för få ord för svarsalternativ. */
-export function buildExercise(
-  type: ExerciseType,
-  word: Word,
-  all: Word[],
-  partners: Word[] = [],
-  rnd: () => number = Math.random,
-  known?: Set<string>,
-): Exercise {
+export interface BuildOptions {
+  partners?: Word[]
+  rnd?: () => number
+  /** Ord som redan introducerats – används helst som utfyllnad och svarsalternativ. */
+  known?: Set<string>
+  /** Om enheten kan läsa upp japanska. Utan det byts lyssningsövningar mot läsövningar. */
+  canListen?: boolean
+}
+
+/** Bygger en övning. Faller tillbaka på en enklare typ om ordet eller ordlistan inte räcker till. */
+export function buildExercise(type: ExerciseType, word: Word, all: Word[], opts: BuildOptions = {}): Exercise {
+  const { partners = [], rnd = Math.random, known, canListen = true } = opts
   const others = all.filter((w) => w.id !== word.id && w.word !== word.word && w.meaning !== word.meaning)
+  const knownFirst = (list: Word[]) => [...list.filter((w) => known?.has(w.id)), ...list.filter((w) => !known?.has(w.id))]
+
+  if (type === 'sentence') {
+    const usable = word.examples.filter((e) => e.ja && e.sv)
+    const example = usable.length ? usable[Math.floor(rnd() * usable.length)] : undefined
+    const wrong = [...new Set(shuffle(others, rnd).flatMap((w) => w.examples.slice(0, 1).map((e) => e.sv)))]
+      .filter((sv) => sv && sv !== example?.sv)
+      .slice(0, 3)
+    if (example && wrong.length && canListen) return { type, word, example, choices: shuffle([example.sv, ...wrong], rnd) }
+    type = 'listen'
+  }
+  if (type === 'cloze') {
+    const example = shuffle(word.examples, rnd).find((e) => e.ja.includes(word.word))
+    const distractors = knownFirst(shuffle(others, rnd)).slice(0, 3)
+    if (example && distractors.length) {
+      const at = example.ja.indexOf(word.word)
+      return {
+        type,
+        word,
+        example,
+        before: example.ja.slice(0, at),
+        after: example.ja.slice(at + word.word.length),
+        options: shuffle([word, ...distractors], rnd),
+      }
+    }
+    type = 'mc_sv_ja'
+  }
+  if (type === 'listen' && !canListen) type = 'mc_ja_sv'
   if (type === 'match') {
     const graded = [word, ...partners.filter((p) => p.id !== word.id)].slice(0, 4)
     const ids = new Set(graded.map((w) => w.id))
-    const spare = shuffle(others.filter((w) => !ids.has(w.id)), rnd)
     // Fyll helst ut med ord man redan har sett, så att man inte ska para ihop okända ord.
-    const fill = [...spare.filter((w) => known?.has(w.id)), ...spare.filter((w) => !known?.has(w.id))].slice(0, 4 - graded.length)
+    const fill = knownFirst(shuffle(others.filter((w) => !ids.has(w.id)), rnd)).slice(0, 4 - graded.length)
     const words = [...graded, ...fill]
     if (words.length >= 3) return { type, word, words: shuffle(words, rnd), graded: graded.map((w) => w.id) }
     type = 'mc_sv_ja'
   }
-  if (type === 'mc_ja_sv' || type === 'mc_sv_ja') {
+  if (type === 'mc_ja_sv' || type === 'mc_sv_ja' || type === 'listen') {
     const distractors = shuffle(others, rnd).slice(0, 3)
     if (distractors.length) return { type, word, options: shuffle([word, ...distractors], rnd) }
     type = 'type_sv'
@@ -196,7 +236,8 @@ export function checkSwedish(input: string, word: Word): boolean {
   const answer = cleanSv(input)
   if (answer.length < 2) return false
   const words = (s: string) => s.split(/[ \-]/)
-  for (const alt of swedishAnswers(word.meaning)) {
+  const alternatives = [...swedishAnswers(word.meaning), ...(word.synonyms ?? []).map(cleanSv).filter((x) => x.length >= 2)]
+  for (const alt of alternatives) {
     if (editDistance(answer, alt) <= Math.floor(Math.max(answer.length, alt.length) / 5)) return true
     // Böjningsformer: "polisen" för "polis", "grubblar" för "grubbla".
     const [short, long] = answer.length <= alt.length ? [answer, alt] : [alt, answer]

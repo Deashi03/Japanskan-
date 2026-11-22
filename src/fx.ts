@@ -1,6 +1,37 @@
 import { getSnap } from './store'
 
-let ctx: AudioContext | null = null
+// ---------------------------------------------------------------- Ljud
+
+interface Engine { ctx: AudioContext; out: AudioNode; wet: AudioNode }
+let engine: Engine | null = null
+
+/** Bygger ljudkedjan: allt går genom en kompressor (jämn nivå) och en liten del genom
+ *  ett syntetiskt rumseko, vilket ger ljuden kropp i stället för torra pip. */
+function build(): Engine {
+  const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+  const ctx = new Ctor()
+  const comp = ctx.createDynamicsCompressor()
+  comp.threshold.value = -18
+  comp.ratio.value = 4
+  comp.attack.value = 0.003
+  comp.release.value = 0.2
+  const master = ctx.createGain()
+  master.gain.value = 0.9
+  master.connect(comp).connect(ctx.destination)
+
+  const len = Math.floor(ctx.sampleRate * 1.4)
+  const impulse = ctx.createBuffer(2, len, ctx.sampleRate)
+  for (let ch = 0; ch < 2; ch++) {
+    const d = impulse.getChannelData(ch)
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3.2)
+  }
+  const reverb = ctx.createConvolver()
+  reverb.buffer = impulse
+  const wet = ctx.createGain()
+  wet.gain.value = 0.22
+  wet.connect(reverb).connect(master)
+  return { ctx, out: master, wet }
+}
 
 /** iPhone spelar bara upp ljud som startats av en tryckning, och tystar webbljud när
  *  ringsignalen är avstängd. Därför väcks ljudet vid varje tryckning, och appen ber om
@@ -10,8 +41,8 @@ function unlock() {
   try {
     const session = (navigator as unknown as { audioSession?: { type: string } }).audioSession
     if (session && session.type !== 'playback') session.type = 'playback'
-    const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
-    ctx ??= new Ctor()
+    engine ??= build()
+    const { ctx } = engine
     if (ctx.state !== 'running') {
       void ctx.resume()
       const src = ctx.createBufferSource()
@@ -27,71 +58,142 @@ if (typeof window !== 'undefined') {
   for (const ev of ['pointerdown', 'touchend', 'keydown'] as const) window.addEventListener(ev, unlock, { capture: true, passive: true })
 }
 
-function audio(): AudioContext | null {
+function audio(): Engine | null {
   if (!getSnap().settings.sound) return null
   unlock()
-  return ctx
+  return engine
 }
 
-function tone(freq: number, start: number, dur: number, opts: { type?: OscillatorType; gain?: number; slideTo?: number } = {}) {
-  const a = audio()
-  if (!a) return
-  const t = a.currentTime + start
-  const osc = a.createOscillator()
-  const g = a.createGain()
+interface ToneOpts { type?: OscillatorType; gain?: number; slideTo?: number; attack?: number; wet?: number }
+
+function tone(freq: number, start: number, dur: number, opts: ToneOpts = {}) {
+  const e = audio()
+  if (!e) return
+  const t = e.ctx.currentTime + start
+  const osc = e.ctx.createOscillator()
+  const g = e.ctx.createGain()
   osc.type = opts.type ?? 'sine'
   osc.frequency.setValueAtTime(freq, t)
   if (opts.slideTo) osc.frequency.exponentialRampToValueAtTime(opts.slideTo, t + dur)
-  const peak = (opts.gain ?? 0.18) * 1.8
   g.gain.setValueAtTime(0.0001, t)
-  g.gain.exponentialRampToValueAtTime(peak, t + 0.012)
+  g.gain.exponentialRampToValueAtTime(opts.gain ?? 0.2, t + (opts.attack ?? 0.006))
   g.gain.exponentialRampToValueAtTime(0.0001, t + dur)
-  osc.connect(g).connect(a.destination)
+  osc.connect(g)
+  g.connect(e.out)
+  if (opts.wet !== 0) {
+    const send = e.ctx.createGain()
+    send.gain.value = opts.wet ?? 1
+    g.connect(send).connect(e.wet)
+  }
   osc.start(t)
-  osc.stop(t + dur + 0.02)
+  osc.stop(t + dur + 0.05)
 }
 
-/** Klockljud: grundton plus svag överton ger en renare, "dyrare" klang. */
-function bell(freq: number, start: number, dur = 0.45, gain = 0.16) {
-  tone(freq, start, dur, { gain })
-  tone(freq * 2, start, dur * 0.6, { gain: gain * 0.35 })
-  tone(freq * 3, start, dur * 0.3, { gain: gain * 0.12 })
+/** Kort brusstöt genom ett filter – används för anslag, svep och "luft". */
+function noise(start: number, dur: number, opts: { from: number; to?: number; q?: number; gain?: number; type?: BiquadFilterType }) {
+  const e = audio()
+  if (!e) return
+  const t = e.ctx.currentTime + start
+  const len = Math.max(1, Math.floor(e.ctx.sampleRate * dur))
+  const buf = e.ctx.createBuffer(1, len, e.ctx.sampleRate)
+  const d = buf.getChannelData(0)
+  for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1
+  const src = e.ctx.createBufferSource()
+  src.buffer = buf
+  const f = e.ctx.createBiquadFilter()
+  f.type = opts.type ?? 'bandpass'
+  f.Q.value = opts.q ?? 1.2
+  f.frequency.setValueAtTime(opts.from, t)
+  if (opts.to) f.frequency.exponentialRampToValueAtTime(opts.to, t + dur)
+  const g = e.ctx.createGain()
+  g.gain.setValueAtTime(0.0001, t)
+  g.gain.exponentialRampToValueAtTime(opts.gain ?? 0.1, t + Math.min(0.02, dur / 3))
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur)
+  src.connect(f).connect(g).connect(e.out)
+  src.start(t)
+}
+
+/** Marimbaliknande ton: grundton, en snabbt avklingande överton och ett litet anslag. */
+function mallet(freq: number, start: number, dur = 0.5, gain = 0.3) {
+  tone(freq, start, dur, { gain, attack: 0.004 })
+  tone(freq * 4, start, dur * 0.22, { gain: gain * 0.28, attack: 0.002 })
+  tone(freq * 2.01, start, dur * 0.5, { gain: gain * 0.12 })
+  noise(start, 0.018, { from: Math.min(freq * 3, 6000), gain: gain * 0.25, q: 0.8 })
+}
+
+/** Glittrande skimmer ovanpå en ton. */
+function sparkle(freq: number, start: number, count = 4, gain = 0.06) {
+  for (let i = 0; i < count; i++) tone(freq * (1 + i * 0.5), start + i * 0.045, 0.28, { gain: gain * (1 - i * 0.15), type: 'triangle' })
 }
 
 function vibrate(pattern: number | number[]) {
   if (getSnap().settings.haptics) navigator.vibrate?.(pattern)
 }
 
-const SCALE = [0, 2, 4, 5, 7, 9, 11, 12]
+// Pentatonisk skala från C5: varje rätt i rad klättrar ett steg och låter alltid harmoniskt.
+const PENTA = [0, 2, 4, 7, 9, 12, 14, 16, 19, 21, 24]
 const note = (semi: number) => 523.25 * Math.pow(2, semi / 12)
 
 export const fx = {
-  /** Rätt svar – tonen stiger för varje rätt i rad. */
+  /** Rätt svar – tonen stiger för varje rätt i rad, med extra glitter vid var femte. */
   correct(combo = 0) {
-    const base = SCALE[Math.min(combo, SCALE.length - 1)]
-    bell(note(base), 0, 0.3)
-    bell(note(base + 7), 0.09, 0.5)
+    const base = PENTA[Math.min(combo, PENTA.length - 1)]
+    mallet(note(base), 0, 0.42, 0.3)
+    mallet(note(base + 7), 0.085, 0.6, 0.3)
+    sparkle(note(base + 19), 0.12, 3, 0.045)
+    if (combo > 0 && (combo + 1) % 5 === 0) {
+      ;[12, 16, 19, 24].forEach((s, i) => mallet(note(base + s), 0.2 + i * 0.07, 0.5, 0.2))
+      sparkle(note(base + 24), 0.45, 5, 0.06)
+    }
     vibrate(15)
   },
+  /** Fel svar – mjuk, dov och kort, så att det inte känns som ett straff. */
   wrong() {
-    tone(196, 0, 0.22, { type: 'triangle', gain: 0.2, slideTo: 147 })
-    tone(147, 0.12, 0.3, { type: 'triangle', gain: 0.16, slideTo: 110 })
+    tone(233, 0, 0.2, { type: 'triangle', gain: 0.32, slideTo: 196 })
+    tone(155, 0.13, 0.34, { type: 'triangle', gain: 0.3, slideTo: 123 })
+    noise(0, 0.07, { from: 300, gain: 0.12, type: 'lowpass' })
     vibrate([40, 60, 40])
   },
+  /** Ett par hamnar rätt i dra-övningen. */
   pop(i = 0) {
-    tone(note(SCALE[Math.min(i, 7)]) * 1.5, 0, 0.12, { gain: 0.14, slideTo: note(SCALE[Math.min(i, 7)]) * 2 })
+    const f = note(PENTA[Math.min(i + 2, PENTA.length - 1)])
+    tone(f, 0, 0.14, { gain: 0.26, slideTo: f * 1.5, attack: 0.003 })
+    mallet(f * 1.5, 0.06, 0.3, 0.16)
     vibrate(8)
   },
+  /** Knapptryck. */
   tap() {
-    tone(880, 0, 0.05, { gain: 0.05 })
+    tone(1400, 0, 0.035, { gain: 0.09, slideTo: 900, wet: 0 })
+    noise(0, 0.012, { from: 3500, gain: 0.05 })
   },
+  /** Nästa fråga glider in. */
+  whoosh() {
+    noise(0, 0.2, { from: 500, to: 2600, q: 0.9, gain: 0.05 })
+  },
+  /** Ny del av ordkortet visas. */
+  reveal() {
+    mallet(note(7), 0, 0.3, 0.14)
+    noise(0, 0.12, { from: 900, to: 2400, gain: 0.03 })
+  },
+  /** Ett nytt ord presenteras. */
+  newWord() {
+    mallet(note(0), 0, 0.5, 0.18)
+    mallet(note(7), 0.09, 0.5, 0.18)
+    mallet(note(12), 0.18, 0.7, 0.18)
+  },
+  /** Passet är klart. */
   complete() {
-    ;[0, 4, 7, 12].forEach((s, i) => bell(note(s), i * 0.11, 0.5))
-    bell(note(16), 0.48, 0.9, 0.18)
-    bell(note(12), 0.48, 0.9, 0.12)
+    ;[0, 4, 7, 12].forEach((s, i) => mallet(note(s), i * 0.1, 0.6, 0.28))
+    ;[12, 16, 19, 24].forEach((s) => mallet(note(s), 0.46, 1.4, 0.2))
+    tone(note(0) / 2, 0.46, 1.3, { gain: 0.22, type: 'triangle' })
+    sparkle(note(24), 0.6, 6, 0.07)
+    sparkle(note(31), 0.85, 6, 0.05)
+    noise(0.44, 0.5, { from: 2000, to: 7000, gain: 0.04 })
     vibrate([20, 40, 20, 40, 60])
   },
 }
+
+// ---------------------------------------------------------------- Uppläsning
 
 let voices: SpeechSynthesisVoice[] = []
 if (typeof speechSynthesis !== 'undefined') {
@@ -102,60 +204,157 @@ if (typeof speechSynthesis !== 'undefined') {
 
 export const canSpeak = typeof speechSynthesis !== 'undefined'
 
-export function speak(text: string) {
+/** Läser upp en eller flera japanska texter i följd. Avbryter det som eventuellt redan läses. */
+export function speak(...texts: string[]) {
   if (!canSpeak) return
   speechSynthesis.cancel()
-  const u = new SpeechSynthesisUtterance(text)
-  u.lang = 'ja-JP'
   const v = voices.find((v) => v.lang.replace('_', '-').startsWith('ja'))
-  if (v) u.voice = v
-  u.rate = 0.9
-  speechSynthesis.speak(u)
+  for (const text of texts) {
+    if (!text) continue
+    const u = new SpeechSynthesisUtterance(text)
+    u.lang = 'ja-JP'
+    if (v) u.voice = v
+    u.rate = 0.9
+    speechSynthesis.speak(u)
+  }
 }
 
-export function confetti() {
-  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return
-  const canvas = document.createElement('canvas')
-  canvas.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:100'
-  document.body.appendChild(canvas)
+export function stopSpeaking() {
+  if (canSpeak) speechSynthesis.cancel()
+}
+
+// ---------------------------------------------------------------- Partiklar
+
+interface Particle { x: number; y: number; vx: number; vy: number; s: number; r: number; vr: number; color: string; life: number; age: number; shape: 0 | 1 | 2; g: number }
+let canvas: HTMLCanvasElement | null = null
+let parts: Particle[] = []
+let running = false
+const reduced = () => typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches
+
+function stage(): CanvasRenderingContext2D | null {
+  if (!canvas) {
+    canvas = document.createElement('canvas')
+    canvas.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:100'
+    document.body.appendChild(canvas)
+  }
   const dpr = devicePixelRatio || 1
-  const w = (canvas.width = innerWidth * dpr)
-  const h = (canvas.height = innerHeight * dpr)
-  const c = canvas.getContext('2d')!
-  const colors = ['#e5484d', '#f5a524', '#30a46c', '#3e63dd', '#8e4ec6', '#ffd60a']
-  const parts = Array.from({ length: 140 }, () => ({
-    x: w / 2 + (Math.random() - 0.5) * w * 0.3,
-    y: h * 0.45,
-    vx: (Math.random() - 0.5) * 22 * dpr,
-    vy: (-Math.random() * 20 - 6) * dpr,
-    s: (Math.random() * 7 + 5) * dpr,
-    r: Math.random() * Math.PI,
-    vr: (Math.random() - 0.5) * 0.4,
-    color: colors[Math.floor(Math.random() * colors.length)],
-  }))
-  const t0 = performance.now()
+  if (canvas.width !== innerWidth * dpr || canvas.height !== innerHeight * dpr) {
+    canvas.width = innerWidth * dpr
+    canvas.height = innerHeight * dpr
+  }
+  return canvas.getContext('2d')
+}
+
+function loop(prev: number) {
+  const c = stage()
+  if (!c) return
+  const dpr = devicePixelRatio || 1
   const frame = (t: number) => {
-    const age = t - t0
-    c.clearRect(0, 0, w, h)
+    const dt = Math.min(40, t - prev) / 16.7
+    prev = t
+    c.clearRect(0, 0, canvas!.width, canvas!.height)
+    parts = parts.filter((p) => p.age < p.life)
     for (const p of parts) {
-      p.vy += 0.55 * dpr
-      p.vx *= 0.985
-      p.x += p.vx
-      p.y += p.vy
-      p.r += p.vr
+      p.age += dt * 16.7
+      p.vy += p.g * dt
+      p.vx *= Math.pow(0.985, dt)
+      p.x += p.vx * dt
+      p.y += p.vy * dt
+      p.r += p.vr * dt
+      const k = 1 - p.age / p.life
       c.save()
-      c.translate(p.x, p.y)
+      c.translate(p.x * dpr, p.y * dpr)
       c.rotate(p.r)
-      c.globalAlpha = Math.max(0, 1 - age / 2600)
+      c.globalAlpha = Math.min(1, k * 1.6)
       c.fillStyle = p.color
-      c.fillRect(-p.s / 2, -p.s / 4, p.s, p.s / 2)
+      const s = p.s * dpr * (p.shape === 2 ? k : 1)
+      if (p.shape === 0) c.fillRect(-s / 2, -s / 4, s, s / 2)
+      else if (p.shape === 1) {
+        c.beginPath()
+        c.arc(0, 0, s / 2, 0, Math.PI * 2)
+        c.fill()
+      } else {
+        // fyruddig stjärna
+        c.beginPath()
+        for (let i = 0; i < 8; i++) {
+          const rad = i % 2 ? s * 0.22 : s * 0.6
+          c.lineTo(Math.cos((i * Math.PI) / 4) * rad, Math.sin((i * Math.PI) / 4) * rad)
+        }
+        c.closePath()
+        c.fill()
+      }
       c.restore()
     }
-    if (age < 2600) requestAnimationFrame(frame)
-    else canvas.remove()
+    if (parts.length) requestAnimationFrame(frame)
+    else {
+      running = false
+      c.clearRect(0, 0, canvas!.width, canvas!.height)
+    }
   }
   requestAnimationFrame(frame)
 }
+
+function emit(list: Particle[]) {
+  if (reduced() || typeof document === 'undefined') return
+  parts.push(...list)
+  if (!running) {
+    running = true
+    loop(performance.now())
+  }
+}
+
+const COLORS = ['#e5484d', '#f5a524', '#30a46c', '#3e63dd', '#8e4ec6', '#ffd60a']
+const GOOD = ['#3fbf7c', '#8fe3b6', '#ffd60a', '#ffffff']
+
+/** Liten gnistkaskad från ett element – används när ett svar är rätt. */
+export function burst(el: Element | null | undefined, count = 14) {
+  if (!el) return
+  const r = el.getBoundingClientRect()
+  const cx = r.left + r.width / 2
+  const cy = r.top + r.height / 2
+  emit(
+    Array.from({ length: count }, (_, i): Particle => {
+      const a = (i / count) * Math.PI * 2 + Math.random() * 0.4
+      const v = 2.2 + Math.random() * 3.2
+      return {
+        x: cx + (Math.cos(a) * r.width) / 3,
+        y: cy + (Math.sin(a) * r.height) / 3,
+        vx: Math.cos(a) * v,
+        vy: Math.sin(a) * v - 1.2,
+        s: 7 + Math.random() * 7,
+        r: Math.random() * Math.PI,
+        vr: (Math.random() - 0.5) * 0.3,
+        color: GOOD[i % GOOD.length],
+        life: 520 + Math.random() * 280,
+        age: 0,
+        shape: i % 3 === 0 ? 1 : 2,
+        g: 0.12,
+      }
+    }),
+  )
+}
+
+/** Konfettiregn från båda sidor – används när passet är klart. */
+export function confetti() {
+  const make = (side: -1 | 1) =>
+    Array.from({ length: 80 }, (): Particle => ({
+      x: side < 0 ? 0 : innerWidth,
+      y: innerHeight * 0.62,
+      vx: -side * (4 + Math.random() * 9),
+      vy: -(8 + Math.random() * 12),
+      s: 6 + Math.random() * 7,
+      r: Math.random() * Math.PI,
+      vr: (Math.random() - 0.5) * 0.5,
+      color: COLORS[Math.floor(Math.random() * COLORS.length)],
+      life: 2200 + Math.random() * 900,
+      age: 0,
+      shape: Math.random() < 0.75 ? 0 : 1,
+      g: 0.38,
+    }))
+  emit([...make(-1), ...make(1)])
+}
+
+// ---------------------------------------------------------------- Tema
 
 /** Avgör om mörkt läge ska gälla just nu enligt inställningarna. */
 export function isDark(theme: string, from: string, to: string, now = new Date()): boolean {

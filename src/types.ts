@@ -10,6 +10,8 @@ export interface Word {
   breakdown: Breakdown[]
   examples: Example[]
   distinctions: Distinction[]
+  /** Andra svenska översättningar som godkänns som svar och går att söka på. */
+  synonyms?: string[]
   list: string
   createdAt: number
   order: number
@@ -32,9 +34,20 @@ export interface CardData {
   /** De senaste svaren (true = rätt), nyast sist. Används för problemord. */
   recent: boolean[]
   lastExercise?: ExerciseType
+  /** Ordet markerades som "kan redan" och räknas inte som ett nytt ord i dagens kvot. */
+  known?: boolean
 }
 
-export type ExerciseType = 'mc_ja_sv' | 'mc_sv_ja' | 'match' | 'type_sv' | 'type_from_sv' | 'type_reading'
+export type ExerciseType =
+  | 'mc_ja_sv'
+  | 'mc_sv_ja'
+  | 'match'
+  | 'listen'
+  | 'sentence'
+  | 'cloze'
+  | 'type_sv'
+  | 'type_from_sv'
+  | 'type_reading'
 
 export interface LogData {
   wordId: string
@@ -58,6 +71,7 @@ export interface Settings {
   darkFrom: string
   darkTo: string
   showExampleReading: boolean
+  autoSpeak: boolean
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -69,6 +83,7 @@ export const DEFAULT_SETTINGS: Settings = {
   darkFrom: '20:00',
   darkTo: '07:00',
   showExampleReading: true,
+  autoSpeak: true,
 }
 
 export type Kind = 'word' | 'card' | 'log' | 'settings'
