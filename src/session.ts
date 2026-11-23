@@ -306,3 +306,16 @@ export function checkSwedish(input: string, word: Word): boolean {
   }
   return false
 }
+
+/** Ledtråd i skrivövningarna: första tecknet i svaret och hur långt det är. */
+export function hintFor(word: Word, toJapanese: boolean): string {
+  if (toJapanese) {
+    const reading = word.reading.replace(/[\s\u3000]/g, '')
+    const chars = [...reading]
+    // Små tecken (ゃゅょっ) hör ihop med tecknet före och visas tillsammans med det.
+    const first = chars[0] + (/[ゃゅょぁぃぅぇぉャュョァィゥェォ]/.test(chars[1] ?? '') ? chars[1] : '')
+    return first + '・'.repeat(Math.max(0, chars.length - [...first].length))
+  }
+  const answer = swedishAnswers(word.meaning)[0] ?? ''
+  return answer ? answer[0].toUpperCase() + answer.slice(1).replace(/[^\s-]/g, '·') : ''
+}

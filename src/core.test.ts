@@ -1,8 +1,8 @@
 import 'fake-indexeddb/auto'
 import { describe, expect, it } from 'vitest'
 import { parseWordFile, splitDuplicates } from './importer'
-import { autoRating, exercisesFor, isProblem, knownCard, LEARNING_ORDER, newCard, pickExercise, Rating, schedule, State } from './srs'
-import { afterIntro, buildExercise, buildQueue, checkReading, checkSwedish, extraQueue, freshWords, meaningPrompt, nextFresh, overtimeQueue, newQuota, requeue, type QItem } from './session'
+import { autoRating, exercisesFor, isProblem, knownCard, LEARNING_ORDER, REVIEW_ORDER, newCard, pickExercise, Rating, schedule, State } from './srs'
+import { afterIntro, buildExercise, buildQueue, checkReading, checkSwedish, extraQueue, freshWords, hintFor, meaningPrompt, nextFresh, overtimeQueue, newQuota, requeue, type QItem } from './session'
 import { dayKey, streaks } from './stats'
 import { isDark } from './fx'
 import { furigana } from './furigana'
@@ -57,16 +57,18 @@ describe('import', () => {
 })
 
 describe('schemaläggning', () => {
-  it('ett nytt ord går igenom alla sex övningstyper innan det blir inlärt', () => {
+  it('ett nytt ord går igenom fem övningstyper innan det blir inlärt', () => {
     let c = newCard(NOW)
     const seen: string[] = []
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 5; i++) {
       const type = pickExercise(word(1), c)
       seen.push(type)
       c = schedule(c, Rating.Good, NOW + i * 60_000, type)
-      expect(c.state).toBe(i < 5 ? State.Learning : State.Review)
+      expect(c.state).toBe(i < 4 ? State.Learning : State.Review)
     }
-    expect(seen).toEqual(['mc_ja_sv', 'match', 'listen', 'mc_sv_ja', 'type_sv', 'type_from_sv'])
+    expect(seen).toEqual(['mc_ja_sv', 'match', 'listen', 'mc_sv_ja', 'type_sv'])
+    // Skriv på japanska hör till repetitionerna, inte till inlärningen.
+    expect(seen).not.toContain('type_from_sv')
     expect(c.due).toBeGreaterThan(NOW + DAY / 2)
   })
   it('fel svar under inlärningen börjar om från första övningstypen', () => {
@@ -75,18 +77,16 @@ describe('schemaläggning', () => {
     c = schedule(c, Rating.Again, NOW, 'listen')
     expect(pickExercise(word(1), c)).toBe('mc_ja_sv')
   })
-  it('inlärda ord växlar mellan sina övningstyper och får aldrig dra-övning eller kanjiläsning', () => {
+  it('repetitioner består bara av skrivövningar och lyssna på mening, i turordning', () => {
+    expect(REVIEW_ORDER).toEqual(['type_from_sv', 'sentence', 'type_sv'])
     const young = { ...newCard(NOW), state: State.Review, stability: 3 }
     const mature = { ...young, stability: 30 }
-    for (const base of [young, mature]) {
-      const list = exercisesFor(word(1), base)
-      expect(list).not.toContain('match')
-      expect(list).not.toContain('type_reading')
-      const picked = new Set(list.map((_, reps) => pickExercise(word(1), { ...base, reps })))
-      expect(picked).toEqual(new Set(list))
+    const forgotten = { ...young, state: State.Relearning }
+    for (const base of [young, mature, forgotten]) {
+      expect(exercisesFor(word(1), base)).toEqual(REVIEW_ORDER)
+      const picked = [0, 1, 2, 3, 4, 5].map((reps) => pickExercise(word(1), { ...base, reps }))
+      expect(picked).toEqual([...REVIEW_ORDER, ...REVIEW_ORDER])
     }
-    expect(exercisesFor(word(1), mature)).toContain('sentence')
-    expect(exercisesFor(word(1), young)).toContain('listen')
   })
   it('”kan redan” hoppar över inlärningen, ger ett intervall på flera dagar och räknas inte i dagens kvot', () => {
     const c = knownCard(NOW)
@@ -112,6 +112,9 @@ describe('schemaläggning', () => {
     expect(autoRating(review, true, 90_000, 'type_sv')).toBe(Rating.Good)
     expect(autoRating(review, true, 90_000, 'type_from_sv')).toBe(Rating.Good)
     expect(autoRating(review, true, 30_000, 'listen')).toBe(Rating.Hard)
+    // Rätt svar med ledtråd räknas som "Svårt", aldrig "Lätt"; fel svar är fortfarande fel.
+    expect(autoRating(review, true, 2000, 'type_from_sv', true)).toBe(Rating.Hard)
+    expect(autoRating(review, false, 2000, 'type_from_sv', true)).toBe(Rating.Again)
   })
   it('problemord flaggas, återkommer inom ett dygn och friskförklaras efter tre rätt i rad', () => {
     let c: CardData = { ...newCard(NOW), state: State.Review, stability: 30, difficulty: 5, reps: 5, last_review: NOW - 30 * DAY, recent: [true, true, true] }
@@ -315,6 +318,13 @@ describe('session', () => {
     expect(checkReading('オフ', { ...w, altJa: ['オフ'] })).toBe(true)
     // Ord med mellanslag eller vågstreck i läsningen.
     expect(checkReading('nantokanaranainokana', word(4, { word: 'なんとかならないのかな', reading: 'なんとか ならない の かな' }))).toBe(true)
+  })
+  it('ledtråden visar första tecknet och svarets längd', () => {
+    expect(hintFor(word(1, { reading: 'きゅうじつ' }), true)).toBe('きゅ・・・')
+    expect(hintFor(word(1, { reading: 'えんざい' }), true)).toBe('え・・・')
+    expect(hintFor(word(1, { reading: 'なんとか ならない' }), true)).toBe('な・・・・・・・')
+    expect(hintFor(word(1, { meaning: 'Ledig dag / helgdag.' }), false)).toBe('L···· ···')
+    expect(hintFor(word(1, { meaning: '気に病むな' }), false)).toBe('')
   })
   it('den svenska frågan avslöjar inte det japanska svaret', () => {
     expect(meaningPrompt('Grubbla över, oroa sig för, ta åt sig. 気に病むな = Grubbla inte över det / oroa dig inte.')).toBe('Grubbla över, oroa sig för, ta åt sig.')

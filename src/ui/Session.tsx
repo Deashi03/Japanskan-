@@ -79,6 +79,9 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
   const [introStep, setIntroStep] = useState(0)
   const [known, setKnown] = useState(0)
   const [overtime, setOvertime] = useState(false)
+  const [paused, setPaused] = useState(false)
+  const pausedRef = useRef(false)
+  pausedRef.current = paused
   const [toast, setToast] = useState<{ id: number; text: string } | null>(null)
   const undo = useRef<Undo | null>(null)
   const lastAnswer = useRef<{ results: Result[]; ms: number } | null>(null)
@@ -93,7 +96,7 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
     let last = performance.now()
     const t = setInterval(() => {
       const now = performance.now()
-      if (document.visibilityState === 'visible') {
+      if (document.visibilityState === 'visible' && !pausedRef.current) {
         elapsedRef.current += Math.min(now - last, 1000)
         setElapsed(elapsedRef.current)
       }
@@ -198,7 +201,7 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
       const item = turn.items.find((q) => q.wordId === r.wordId)
       if (!item) continue
       const card = snap.cards.get(r.wordId) ?? newCard(now)
-      const rating = autoRating(card, r.correct, ms, type)
+      const rating = autoRating(card, r.correct, ms, type, r.hinted)
       const log: LogData = { wordId: r.wordId, ts: now, rating, correct: r.correct, exercise: type, ms: Math.round(ms) }
       if (item.extra) {
         log.extra = true
@@ -284,7 +287,7 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
   // Enter = fortsätt.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Enter' || e.repeat) return
+      if (e.key !== 'Enter' || e.repeat || paused) return
       if (phase === 'feedback') {
         e.preventDefault()
         advance(queue)
@@ -313,11 +316,25 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
           </div>
         </div>
         <span className="clock">{overtime ? '+' + overClock : clock}</span>
+        <button className="icon-btn pause-btn" onClick={() => { stopSpeaking(); setPaused(true) }} aria-label="Pausa passet">
+          <Icon name="pause" />
+        </button>
         <div className="combo-row">
           {tally.combo >= 2 && <span className="combo" key={tally.combo}><Icon name="flame" size={14} /> {tally.combo} i rad</span>}
         </div>
       </header>
 
+      {paused && (
+        <div className="pause-screen" role="dialog" aria-modal="true" aria-label="Pausat">
+          <div className="pause-card">
+            <Icon name="pause" size={40} />
+            <h2>Pausat</h2>
+            <p className="muted">Klockan står still. Frågan är dold tills du fortsätter.</p>
+            <button className="btn primary big" autoFocus onClick={() => setPaused(false)}>Fortsätt</button>
+            <button className="btn ghost" onClick={() => { setPaused(false); finish() }}>Avsluta passet</button>
+          </div>
+        </div>
+      )}
       {toast && <div className="toast" key={toast.id} onAnimationEnd={() => setToast(null)}><Icon name="flame" size={28} /> {toast.text}</div>}
       <div className={'session-body' + (phase === 'feedback' && feedback && !feedback.correct ? ' nudge' : '')}>
         {extraMode && !overtime && <div className="notice slim">Extra övning – påverkar inte schemat</div>}

@@ -511,3 +511,21 @@ ruby.furi.sent rt { font-size: 0.56em; }
 .page-head { flex-wrap: wrap; row-gap: 8px; }
 .page-head h1 { white-space: nowrap; }
 .page-head .btn { white-space: nowrap; padding: 0 12px; }
+
+.hint { text-align: center; font-size: 1.2rem; font-weight: 700; letter-spacing: 0.08em; margin-top: -6px; }
+.hint span:first-child { display: block; font-size: 0.72rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.exercise .row { flex-wrap: wrap; }
+.exercise .row .btn.ghost { padding: 0 10px; }
+.pause-btn { width: 36px; height: 36px; margin-left: -4px; }
+.pause-screen { position: fixed; inset: 0; z-index: 70; background: var(--bg); display: grid; place-items: center; padding: 24px; animation: fade 0.15s; }
+.pause-card { display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; width: 100%; max-width: 340px; color: var(--ink); }
+.pause-card svg { color: var(--muted); }
+
+.pick.box { color: var(--accent-ink); }
+.pick.box::before { content: ''; position: absolute; width: 22px; height: 22px; border-radius: 7px; border: 2px solid var(--muted); }
+.pick.box { position: relative; }
+.pick.box.on { background: none; }
+.pick.box.on::before { background: var(--select); border-color: var(--select); }
+.pick.box svg { position: relative; color: #fff; }
+.bulk-bar { position: sticky; bottom: calc(84px + env(safe-area-inset-bottom)); z-index: 5; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.25); animation: risein 0.25s; }
+@media (min-width: 860px) { .bulk-bar { bottom: 16px; } }

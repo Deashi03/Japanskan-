@@ -25,6 +25,23 @@ export function WordList({ onImport }: { onImport: () => void }) {
   const [openId, setOpenId] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
   const [wishOpen, setWishOpen] = useState(false)
+  const [selecting, setSelecting] = useState(false)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const toggle = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (!next.delete(id)) next.add(id)
+      return next
+    })
+  const stopSelecting = () => {
+    setSelecting(false)
+    setSelected(new Set())
+  }
+  /** Utför en åtgärd på de markerade orden och lämnar sedan markeringsläget. */
+  const bulk = (action: () => Promise<void>) => {
+    void action()
+    stopSelecting()
+  }
   const [wished, setWished] = useState('')
   const wishes = wishCount(snap.settings.wishlist)
   const now = Date.now()
@@ -49,6 +66,11 @@ export function WordList({ onImport }: { onImport: () => void }) {
       .sort(filter === 'chosen' ? byOrder : (a, b) => a.createdAt - b.createdAt || a.order - b.order)
   }, [snap, query, filter, list])
 
+  // Bara ord som fortfarande visas räknas som markerade; varje åtgärd gäller de ord den passar för.
+  const picked = words.filter((w) => selected.has(w.id))
+  const canQueue = picked.filter((w) => !snap.cards.has(w.id) && !w.suspended && !w.priority)
+  const canKnow = picked.filter((w) => !w.suspended && ['new', 'learning'].includes(statusOf(snap.cards.get(w.id))))
+  const allPaused = picked.length > 0 && picked.every((w) => w.suspended)
   const open = openId ? snap.words.get(openId) : undefined
   const openCard = openId ? snap.cards.get(openId) : undefined
   const inList = list ? [...snap.words.values()].filter((w) => w.list === list) : []
@@ -94,6 +116,21 @@ export function WordList({ onImport }: { onImport: () => void }) {
           </button>
         </div>
       )}
+      {words.length > 0 && (
+        <div className="row between">
+          <span className="muted small">{words.length} ord visas</span>
+          {selecting ? (
+            <div className="row">
+              <button className="btn small" onClick={() => setSelected(new Set(selected.size === words.length ? [] : words.map((w) => w.id)))}>
+                {selected.size === words.length ? 'Avmarkera alla' : 'Markera alla'}
+              </button>
+              <button className="btn small ghost" onClick={stopSelecting}>Klar</button>
+            </div>
+          ) : (
+            <button className="btn small" onClick={() => setSelecting(true)}>Välj flera</button>
+          )}
+        </div>
+      )}
       {words.length === 0 ? (
         <div className="center pad">
           <p className="muted">{snap.words.size ? 'Inga ord matchar.' : 'Inga ord än – importera en lista för att börja.'}</p>
@@ -114,13 +151,17 @@ export function WordList({ onImport }: { onImport: () => void }) {
           )}
         </div>
       ) : (
-        <ul className="wordlist">
+        <ul className={'wordlist' + (selecting ? ' selecting' : '')}>
           {words.map((w) => {
             const c = snap.cards.get(w.id)
             const s = statusOf(c)
             return (
               <li key={w.id} className="wordrow-wrap">
-                {!c && !w.suspended && (
+                {selecting ? (
+                  <button className={'pick box' + (selected.has(w.id) ? ' on' : '')} role="checkbox" aria-checked={selected.has(w.id)} aria-label={`Markera ${w.word}`} onClick={() => toggle(w.id)}>
+                    {selected.has(w.id) && <Icon name="check" size={18} />}
+                  </button>
+                ) : !c && !w.suspended && (
                   <button
                     className={'pick' + (w.priority ? ' on' : '')}
                     aria-pressed={!!w.priority}
@@ -131,7 +172,7 @@ export function WordList({ onImport }: { onImport: () => void }) {
                     <Icon name={w.priority ? 'check' : 'plus'} size={18} />
                   </button>
                 )}
-                <button className={'wordrow' + (w.suspended ? ' paused' : '')} onClick={() => setOpenId(w.id)}>
+                <button className={'wordrow' + (w.suspended ? ' paused' : '')} onClick={() => (selecting ? toggle(w.id) : setOpenId(w.id))}>
                   <div className="wordrow-main">
                     <div><Ja className="strong">{w.word}</Ja> <Ja className="muted">{w.reading}</Ja></div>
                     <div className="clamp1 muted">{w.meaning}</div>
@@ -181,6 +222,16 @@ export function WordList({ onImport }: { onImport: () => void }) {
             </button>
           </div>
         </Modal>
+      )}
+      {selecting && picked.length > 0 && (
+        <div className="bulk-bar" role="toolbar" aria-label="Åtgärder för markerade ord">
+          <strong>{picked.length} markerade</strong>
+          <div className="row wrap">
+            {canQueue.length > 0 && <button className="btn small primary" onClick={() => bulk(() => actions.saveWords(canQueue.map((w, i) => ({ ...w, priority: Date.now() + i }))))}>Lär mig härnäst ({canQueue.length})</button>}
+            {canKnow.length > 0 && <button className="btn small" onClick={() => bulk(() => actions.apply({ cards: canKnow.map((w) => [w.id, knownCard(Date.now())]) }))}>Kan redan ({canKnow.length})</button>}
+            <button className="btn small" onClick={() => bulk(() => actions.saveWords(picked.map((w) => ({ ...w, suspended: !allPaused }))))}>{allPaused ? 'Återuppta' : 'Pausa'}</button>
+          </div>
+        </div>
       )}
       {wishOpen && (
         <Modal title="Önskelista" onClose={() => setWishOpen(false)}>
