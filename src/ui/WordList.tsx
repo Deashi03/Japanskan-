@@ -4,6 +4,7 @@ import { byOrder } from '../session'
 import { actions, useStore } from '../store'
 import type { Breakdown, Distinction, Example, Word } from '../types'
 import { Icon, Ja, Modal, WordCard } from './bits'
+import { addToWishlist, wishCount, Wishlist } from './Wishlist'
 
 type Filter = 'all' | 'chosen' | 'new' | 'learning' | 'known' | 'problem' | 'suspended'
 const FILTERS: [Filter, string][] = [
@@ -23,6 +24,26 @@ export function WordList({ onImport }: { onImport: () => void }) {
   const [list, setList] = useState('')
   const [openId, setOpenId] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
+  const [wishOpen, setWishOpen] = useState(false)
+  const [selecting, setSelecting] = useState(false)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const toggle = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (!next.delete(id)) next.add(id)
+      return next
+    })
+  const stopSelecting = () => {
+    setSelecting(false)
+    setSelected(new Set())
+  }
+  /** Utför en åtgärd på de markerade orden och lämnar sedan markeringsläget. */
+  const bulk = (action: () => Promise<void>) => {
+    void action()
+    stopSelecting()
+  }
+  const [wished, setWished] = useState('')
+  const wishes = wishCount(snap.settings.wishlist)
   const now = Date.now()
 
   const lists = useMemo(() => [...new Set([...snap.words.values()].map((w) => w.list))].sort(), [snap.words])
@@ -45,6 +66,11 @@ export function WordList({ onImport }: { onImport: () => void }) {
       .sort(filter === 'chosen' ? byOrder : (a, b) => a.createdAt - b.createdAt || a.order - b.order)
   }, [snap, query, filter, list])
 
+  // Bara ord som fortfarande visas räknas som markerade; varje åtgärd gäller de ord den passar för.
+  const picked = words.filter((w) => selected.has(w.id))
+  const canQueue = picked.filter((w) => !snap.cards.has(w.id) && !w.suspended && !w.priority)
+  const canKnow = picked.filter((w) => !w.suspended && ['new', 'learning'].includes(statusOf(snap.cards.get(w.id))))
+  const allPaused = picked.length > 0 && picked.every((w) => w.suspended)
   const open = openId ? snap.words.get(openId) : undefined
   const openCard = openId ? snap.cards.get(openId) : undefined
   const inList = list ? [...snap.words.values()].filter((w) => w.list === list) : []
@@ -54,7 +80,10 @@ export function WordList({ onImport }: { onImport: () => void }) {
     <div className="page">
       <header className="page-head">
         <h1>Ordlista <span className="muted count">{snap.words.size}</span></h1>
-        <button className="btn primary" onClick={onImport}><Icon name="plus" size={18} /> Importera</button>
+        <div className="row">
+          <button className="btn" onClick={() => setWishOpen(true)}>Önskelista{wishes > 0 ? ` (${wishes})` : ''}</button>
+          <button className="btn primary" onClick={onImport}><Icon name="plus" size={18} /> Importera</button>
+        </div>
       </header>
       <input className="search" type="search" placeholder="Sök på japanska eller svenska" value={query} onChange={(e) => setQuery(e.target.value)} />
       {filter === 'chosen' && <p className="muted small">Valda ord introduceras före alla andra nya ord, i den ordning du valde dem. Är de fler än passet rymmer kommer resten i nästa pass.</p>}
@@ -87,16 +116,52 @@ export function WordList({ onImport }: { onImport: () => void }) {
           </button>
         </div>
       )}
+      {words.length > 0 && (
+        <div className="row between">
+          <span className="muted small">{words.length} ord visas</span>
+          {selecting ? (
+            <div className="row">
+              <button className="btn small" onClick={() => setSelected(new Set(selected.size === words.length ? [] : words.map((w) => w.id)))}>
+                {selected.size === words.length ? 'Avmarkera alla' : 'Markera alla'}
+              </button>
+              <button className="btn small ghost" onClick={stopSelecting}>Klar</button>
+            </div>
+          ) : (
+            <button className="btn small" onClick={() => setSelecting(true)}>Välj flera</button>
+          )}
+        </div>
+      )}
       {words.length === 0 ? (
-        <p className="muted center pad">{snap.words.size ? 'Inga ord matchar.' : 'Inga ord än – importera en lista för att börja.'}</p>
+        <div className="center pad">
+          <p className="muted">{snap.words.size ? 'Inga ord matchar.' : 'Inga ord än – importera en lista för att börja.'}</p>
+          {query.trim() && (
+            wished === query.trim() ? (
+              <p className="added">”{wished}” ligger nu i önskelistan.</p>
+            ) : (
+              <button
+                className="btn primary add-wish"
+                onClick={() => {
+                  addToWishlist(query)
+                  setWished(query.trim())
+                }}
+              >
+                <Icon name="plus" size={18} /> Lägg ”{query.trim()}” i önskelistan
+              </button>
+            )
+          )}
+        </div>
       ) : (
-        <ul className="wordlist">
+        <ul className={'wordlist' + (selecting ? ' selecting' : '')}>
           {words.map((w) => {
             const c = snap.cards.get(w.id)
             const s = statusOf(c)
             return (
               <li key={w.id} className="wordrow-wrap">
-                {!c && !w.suspended && (
+                {selecting ? (
+                  <button className={'pick box' + (selected.has(w.id) ? ' on' : '')} role="checkbox" aria-checked={selected.has(w.id)} aria-label={`Markera ${w.word}`} onClick={() => toggle(w.id)}>
+                    {selected.has(w.id) && <Icon name="check" size={18} />}
+                  </button>
+                ) : !c && !w.suspended && (
                   <button
                     className={'pick' + (w.priority ? ' on' : '')}
                     aria-pressed={!!w.priority}
@@ -107,7 +172,7 @@ export function WordList({ onImport }: { onImport: () => void }) {
                     <Icon name={w.priority ? 'check' : 'plus'} size={18} />
                   </button>
                 )}
-                <button className={'wordrow' + (w.suspended ? ' paused' : '')} onClick={() => setOpenId(w.id)}>
+                <button className={'wordrow' + (w.suspended ? ' paused' : '')} onClick={() => (selecting ? toggle(w.id) : setOpenId(w.id))}>
                   <div className="wordrow-main">
                     <div><Ja className="strong">{w.word}</Ja> <Ja className="muted">{w.reading}</Ja></div>
                     <div className="clamp1 muted">{w.meaning}</div>
@@ -158,6 +223,21 @@ export function WordList({ onImport }: { onImport: () => void }) {
           </div>
         </Modal>
       )}
+      {selecting && picked.length > 0 && (
+        <div className="bulk-bar" role="toolbar" aria-label="Åtgärder för markerade ord">
+          <strong>{picked.length} markerade</strong>
+          <div className="row wrap">
+            {canQueue.length > 0 && <button className="btn small primary" onClick={() => bulk(() => actions.saveWords(canQueue.map((w, i) => ({ ...w, priority: Date.now() + i }))))}>Lär mig härnäst ({canQueue.length})</button>}
+            {canKnow.length > 0 && <button className="btn small" onClick={() => bulk(() => actions.apply({ cards: canKnow.map((w) => [w.id, knownCard(Date.now())]) }))}>Kan redan ({canKnow.length})</button>}
+            <button className="btn small" onClick={() => bulk(() => actions.saveWords(picked.map((w) => ({ ...w, suspended: !allPaused }))))}>{allPaused ? 'Återuppta' : 'Pausa'}</button>
+          </div>
+        </div>
+      )}
+      {wishOpen && (
+        <Modal title="Önskelista" onClose={() => setWishOpen(false)}>
+          <Wishlist />
+        </Modal>
+      )}
       {open && editing && (
         <WordEditor
           word={open}
@@ -194,6 +274,7 @@ function Rows<T extends Record<string, string>>({ title, rows, fields, onChange 
 function WordEditor({ word, onSave, onClose }: { word: Word; onSave: (w: Word) => void; onClose: () => void }) {
   const [w, setW] = useState(word)
   const [synonyms, setSynonyms] = useState((word.synonyms ?? []).join(', '))
+  const [altJa, setAltJa] = useState((word.altJa ?? []).join('、'))
   const valid = w.word.trim() && w.reading.trim() && w.meaning.trim()
   return (
     <Modal title="Redigera ord" onClose={onClose}>
@@ -208,6 +289,7 @@ function WordEditor({ word, onSave, onClose }: { word: Word; onSave: (w: Word) =
             reading: w.reading.trim(),
             meaning: w.meaning.trim(),
             synonyms: [...new Set(synonyms.split(/[,\n]/).map((x) => x.trim()).filter(Boolean))],
+            altJa: [...new Set(altJa.split(/[,、\n]/).map((x) => x.trim()).filter(Boolean))],
             breakdown: w.breakdown.filter((b) => b.kanji.trim() && b.meaning.trim()),
             examples: w.examples.filter((x) => x.ja.trim() && x.sv.trim()),
             distinctions: w.distinctions.filter((d) => d.word.trim() && d.meaning.trim()),
@@ -220,6 +302,10 @@ function WordEditor({ word, onSave, onClose }: { word: Word; onSave: (w: Word) =
         <label className="field">
           <span>Synonymer (godkända svar, åtskilda med komma)</span>
           <textarea rows={2} value={synonyms} onChange={(e) => setSynonyms(e.target.value)} />
+        </label>
+        <label className="field">
+          <span>Japanska alternativ (godkänns när du skriver på japanska)</span>
+          <input lang="ja" value={altJa} onChange={(e) => setAltJa(e.target.value)} placeholder="Åtskilda med komma" />
         </label>
         <label className="field"><span>Lista</span><input value={w.list} onChange={(e) => setW({ ...w, list: e.target.value })} /></label>
         <Rows<Breakdown & Record<string, string>> title="Nedbrytning" rows={w.breakdown as never} fields={[['kanji', 'Kanji'], ['reading', 'Läsning'], ['meaning', 'Betydelse']]} onChange={(breakdown) => setW({ ...w, breakdown })} />

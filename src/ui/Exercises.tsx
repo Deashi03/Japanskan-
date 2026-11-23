@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { burst, fx, speak } from '../fx'
-import { checkReading, checkSwedish, kanaPreview, shuffle, type Exercise } from '../session'
+import { checkReading, checkSwedish, hintFor, kanaPreview, meaningPrompt, shuffle, type Exercise } from '../session'
+import { getSnap } from '../store'
 import { furigana } from '../furigana'
 import { Furi, FuriText, Icon, Ja, Segs, SpeakButton } from './bits'
 
-export interface Result { wordId: string; correct: boolean; answer?: string }
+export interface Result { wordId: string; correct: boolean; answer?: string; hinted?: boolean }
 type Done = (results: Result[], ms: number) => void
 
 function useElapsed() {
@@ -60,7 +61,7 @@ export function MultipleChoice({ ex, onDone }: { ex: Extract<Exercise, { type: '
           <SpeakButton text={ex.word.word} />
         </div>
       ) : (
-        <div className="prompt-sv">{ex.word.meaning}</div>
+        <div className="prompt-sv">{meaningPrompt(ex.word.meaning)}</div>
       )}
       <div className={'options' + (toSwedish ? '' : ' grid')}>
         {ex.options.map((o, i) => {
@@ -179,6 +180,7 @@ export function Cloze({ ex, onDone }: { ex: Extract<Exercise, { type: 'cloze' }>
 export function Typing({ ex, onDone }: { ex: Extract<Exercise, { type: 'type_sv' | 'type_from_sv' }>; onDone: Done }) {
   const [value, setValue] = useState('')
   const [state, setState] = useState<'' | 'right' | 'wrong'>('')
+  const [hint, setHint] = useState<string | null>(null)
   const input = useRef<HTMLInputElement>(null)
   const elapsed = useElapsed()
   const toJapanese = ex.type === 'type_from_sv'
@@ -190,11 +192,11 @@ export function Typing({ ex, onDone }: { ex: Extract<Exercise, { type: 'type_sv'
   function submit(giveUp = false) {
     if (state) return
     if (!giveUp && !value.trim()) return
-    const correct = !giveUp && (toJapanese ? checkReading(value, ex.word) : checkSwedish(value, ex.word))
+    const correct = !giveUp && (toJapanese ? checkReading(value, ex.word, getSnap().words.values()) : checkSwedish(value, ex.word))
     setState(correct ? 'right' : 'wrong')
     if (correct) burst(input.current)
     input.current?.blur()
-    onDone([{ wordId: ex.word.id, correct, answer: giveUp ? undefined : value.trim() }], elapsed())
+    onDone([{ wordId: ex.word.id, correct, answer: giveUp ? undefined : value.trim(), hinted: hint !== null }], elapsed())
   }
 
   return (
@@ -207,7 +209,7 @@ export function Typing({ ex, onDone }: { ex: Extract<Exercise, { type: 'type_sv'
     >
       <p className="ex-label">{toJapanese ? 'Skriv ordet på japanska' : 'Skriv betydelsen på svenska'}</p>
       {toJapanese ? (
-        <div className="prompt-sv">{ex.word.meaning}</div>
+        <div className="prompt-sv">{meaningPrompt(ex.word.meaning)}</div>
       ) : (
         <div className="prompt-ja">
           <Furi word={ex.word.word} reading={ex.word.reading} />
@@ -221,7 +223,7 @@ export function Typing({ ex, onDone }: { ex: Extract<Exercise, { type: 'type_sv'
         value={value}
         onChange={(e) => setValue(e.target.value)}
         readOnly={!!state}
-        placeholder={toJapanese ? 'ひらがな eller romaji' : 'Svenska'}
+        placeholder={toJapanese ? 'Kanji, ひらがな eller romaji' : 'Svenska'}
         aria-label="Ditt svar"
         autoCapitalize="none"
         autoCorrect="off"
@@ -234,9 +236,22 @@ export function Typing({ ex, onDone }: { ex: Extract<Exercise, { type: 'type_sv'
           <span lang="ja" className="ja">{/[a-z]/i.test(value) ? kanaPreview(value) : ' '}</span>
         </div>
       )}
+      {hint !== null && <div className="hint pop-in"><span>Ledtråd</span> <span lang={toJapanese ? 'ja' : 'sv'} className={toJapanese ? 'ja' : ''}>{hint}</span></div>}
       {!state && (
         <div className="row">
           <button type="button" className="btn ghost" onClick={() => submit(true)}>Vet inte</button>
+          {hint === null && (
+            <button
+              type="button"
+              className="btn ghost"
+              onClick={() => {
+                setHint(hintFor(ex.word, toJapanese))
+                input.current?.focus()
+              }}
+            >
+              Ledtråd
+            </button>
+          )}
           <button type="submit" className="btn primary grow" disabled={!value.trim()}>Kontrollera</button>
         </div>
       )}

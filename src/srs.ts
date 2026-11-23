@@ -58,10 +58,11 @@ const PACE: Record<ExerciseType, [number, number]> = {
 }
 
 /** Räknar ut FSRS-betyget automatiskt från om svaret var rätt och hur snabbt det gick. */
-export function autoRating(card: CardData, correct: boolean, ms: number, exercise: ExerciseType): Grade {
+export function autoRating(card: CardData, correct: boolean, ms: number, exercise: ExerciseType, hinted = false): Grade {
   if (!correct) return Rating.Again
   const [fast, slow] = PACE[exercise]
-  if (ms > slow) return Rating.Hard
+  // Rätt svar med ledtråd räknas som "Svårt": ordet satt inte helt av sig självt.
+  if (hinted || ms > slow) return Rating.Hard
   // "Lätt" hoppar över inlärningssteg, så det ges bara till ord som redan är inlärda.
   if (ms < fast && card.state === State.Review && !isProblem(card)) return Rating.Easy
   return Rating.Good
@@ -117,20 +118,19 @@ export const STATUS_LABEL: Record<Status, string> = {
   mature: 'Moget',
 }
 
-/** Ordningen ett nytt ord går igenom: flerval, dra till betydelse, lyssna, svenska → japanska, skriv på svenska. */
+/** Ordningen ett nytt ord går igenom: flerval, dra till betydelse, lyssna, svenska → japanska
+ *  och skriv på svenska. */
 export const LEARNING_ORDER: ExerciseType[] = ['mc_ja_sv', 'match', 'listen', 'mc_sv_ja', 'type_sv']
-const RELEARNING: ExerciseType[] = ['type_sv', 'listen', 'mc_sv_ja']
-const YOUNG: ExerciseType[] = ['type_sv', 'listen', 'cloze', 'mc_sv_ja']
-const MATURE: ExerciseType[] = ['type_from_sv', 'sentence', 'type_sv', 'cloze', 'listen']
+/** Repetitioner använder bara de övningar som kräver mest: skriva ordet på japanska,
+ *  förstå en uppläst mening och skriva betydelsen på svenska. */
+export const REVIEW_ORDER: ExerciseType[] = ['type_from_sv', 'sentence', 'type_sv']
 
-/** Vilka övningstyper som passar ordet just nu – svårare ju bättre man kan det.
- *  Dra-övningen används bara under inlärningen: den går delvis att lösa med uteslutning
- *  och är därför för svagt bevis för ord som redan är inlärda. */
+/** Vilka övningstyper som passar ordet just nu. Nya ord går igenom de enklare typerna
+ *  en gång var; allt därefter är skriv- och lyssningsövningar. */
 export function exercisesFor(_word: Word, card: CardData): ExerciseType[] {
   if (card.state === State.New) return ['mc_ja_sv']
   if (card.state === State.Learning) return [LEARNING_ORDER[Math.min(card.learning_steps, LEARNING_ORDER.length - 1)]]
-  if (card.state === State.Relearning) return RELEARNING
-  return card.stability < 7 ? YOUNG : MATURE
+  return REVIEW_ORDER
 }
 
 /** Inlärda ord växlar mellan sina övningstyper för varje repetition. */

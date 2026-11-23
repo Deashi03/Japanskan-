@@ -9,6 +9,7 @@ export function ImportView({ onClose }: { onClose: () => void }) {
   const [text, setText] = useState('')
   const [listName, setListName] = useState(() => 'Lista ' + new Date().toLocaleDateString('sv-SE'))
   const [copied, setCopied] = useState(false)
+  const [pasteError, setPasteError] = useState<string | null>(null)
   const [done, setDone] = useState<{ added: number; updated: number } | null>(null)
 
   const result = useMemo(() => (text.trim() ? parseWordFile(text) : null), [text])
@@ -21,6 +22,18 @@ export function ImportView({ onClose }: { onClose: () => void }) {
       setTimeout(() => setCopied(false), 2000)
     } catch {
       alert('Kunde inte kopiera. Markera och kopiera texten manuellt i stället.')
+    }
+  }
+
+  /** Hämtar AI:ns svar direkt ur urklipp, så att man slipper spara en fil. */
+  async function paste() {
+    try {
+      const clip = await navigator.clipboard.readText()
+      if (!clip.trim()) return setPasteError('Urklipp är tomt. Kopiera AI:ns svar först.')
+      setPasteError(null)
+      setText(clip)
+    } catch {
+      setPasteError('Appen fick inte läsa urklipp. Klistra in texten i rutan nedanför i stället.')
     }
   }
 
@@ -61,6 +74,8 @@ export function ImportView({ onClose }: { onClose: () => void }) {
         </li>
         <li>
           <h3>Ladda upp filen eller klistra in svaret</h3>
+          <button className="btn primary" onClick={() => void paste()}>Klistra in från urklipp</button>
+          {pasteError && <div className="notice">{pasteError}</div>}
           <input type="file" accept=".json,.txt,application/json,text/plain" onChange={(e) => void onFile(e.target.files?.[0])} />
           <textarea rows={5} placeholder="…eller klistra in AI:ns svar här" value={text} onChange={(e) => setText(e.target.value)} spellCheck={false} />
         </li>

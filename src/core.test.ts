@@ -1,8 +1,8 @@
 import 'fake-indexeddb/auto'
 import { describe, expect, it } from 'vitest'
 import { parseWordFile, splitDuplicates } from './importer'
-import { autoRating, exercisesFor, isProblem, knownCard, LEARNING_ORDER, newCard, pickExercise, Rating, schedule, State } from './srs'
-import { afterIntro, buildExercise, buildQueue, checkReading, checkSwedish, extraQueue, freshWords, nextFresh, overtimeQueue, newQuota, requeue, type QItem } from './session'
+import { autoRating, exercisesFor, isProblem, knownCard, LEARNING_ORDER, REVIEW_ORDER, newCard, pickExercise, Rating, schedule, State } from './srs'
+import { afterIntro, buildExercise, buildQueue, checkReading, checkSwedish, extraQueue, freshWords, hintFor, meaningPrompt, nextFresh, overtimeQueue, newQuota, requeue, type QItem } from './session'
 import { dayKey, streaks } from './stats'
 import { isDark } from './fx'
 import { furigana } from './furigana'
@@ -57,7 +57,7 @@ describe('import', () => {
 })
 
 describe('schemaläggning', () => {
-  it('ett nytt ord går igenom alla fem övningstyper innan det blir inlärt', () => {
+  it('ett nytt ord går igenom fem övningstyper innan det blir inlärt', () => {
     let c = newCard(NOW)
     const seen: string[] = []
     for (let i = 0; i < 5; i++) {
@@ -67,6 +67,8 @@ describe('schemaläggning', () => {
       expect(c.state).toBe(i < 4 ? State.Learning : State.Review)
     }
     expect(seen).toEqual(['mc_ja_sv', 'match', 'listen', 'mc_sv_ja', 'type_sv'])
+    // Skriv på japanska hör till repetitionerna, inte till inlärningen.
+    expect(seen).not.toContain('type_from_sv')
     expect(c.due).toBeGreaterThan(NOW + DAY / 2)
   })
   it('fel svar under inlärningen börjar om från första övningstypen', () => {
@@ -75,18 +77,16 @@ describe('schemaläggning', () => {
     c = schedule(c, Rating.Again, NOW, 'listen')
     expect(pickExercise(word(1), c)).toBe('mc_ja_sv')
   })
-  it('inlärda ord växlar mellan sina övningstyper och får aldrig dra-övning eller kanjiläsning', () => {
+  it('repetitioner består bara av skrivövningar och lyssna på mening, i turordning', () => {
+    expect(REVIEW_ORDER).toEqual(['type_from_sv', 'sentence', 'type_sv'])
     const young = { ...newCard(NOW), state: State.Review, stability: 3 }
     const mature = { ...young, stability: 30 }
-    for (const base of [young, mature]) {
-      const list = exercisesFor(word(1), base)
-      expect(list).not.toContain('match')
-      expect(list).not.toContain('type_reading')
-      const picked = new Set(list.map((_, reps) => pickExercise(word(1), { ...base, reps })))
-      expect(picked).toEqual(new Set(list))
+    const forgotten = { ...young, state: State.Relearning }
+    for (const base of [young, mature, forgotten]) {
+      expect(exercisesFor(word(1), base)).toEqual(REVIEW_ORDER)
+      const picked = [0, 1, 2, 3, 4, 5].map((reps) => pickExercise(word(1), { ...base, reps }))
+      expect(picked).toEqual([...REVIEW_ORDER, ...REVIEW_ORDER])
     }
-    expect(exercisesFor(word(1), mature)).toContain('sentence')
-    expect(exercisesFor(word(1), young)).toContain('listen')
   })
   it('”kan redan” hoppar över inlärningen, ger ett intervall på flera dagar och räknas inte i dagens kvot', () => {
     const c = knownCard(NOW)
@@ -112,6 +112,9 @@ describe('schemaläggning', () => {
     expect(autoRating(review, true, 90_000, 'type_sv')).toBe(Rating.Good)
     expect(autoRating(review, true, 90_000, 'type_from_sv')).toBe(Rating.Good)
     expect(autoRating(review, true, 30_000, 'listen')).toBe(Rating.Hard)
+    // Rätt svar med ledtråd räknas som "Svårt", aldrig "Lätt"; fel svar är fortfarande fel.
+    expect(autoRating(review, true, 2000, 'type_from_sv', true)).toBe(Rating.Hard)
+    expect(autoRating(review, false, 2000, 'type_from_sv', true)).toBe(Rating.Again)
   })
   it('problemord flaggas, återkommer inom ett dygn och friskförklaras efter tre rätt i rad', () => {
     let c: CardData = { ...newCard(NOW), state: State.Review, stability: 30, difficulty: 5, reps: 5, last_review: NOW - 30 * DAY, recent: [true, true, true] }
@@ -296,6 +299,38 @@ describe('session', () => {
     for (const ok of ['således', 'Alltså', 'därför', 'av den anledningen', 'sålédes'.normalize('NFC')]) expect(checkSwedish(ok, yotte), ok).toBe(true)
     expect(checkSwedish('kanske', yotte)).toBe(false)
     expect(checkSwedish('således', word(5, { word: 'よって', meaning: 'Därför / följaktligen.' }))).toBe(false)
+  })
+  it('skriv på japanska: kanji, hiragana, romaji och synonymer godkänns', () => {
+    const w = word(1, { word: '休日', reading: 'きゅうじつ', meaning: 'Ledig dag / helgdag.' })
+    for (const ok of ['休日', 'きゅうじつ', 'kyuujitsu', 'キュウジツ', ' きゅう じつ ']) expect(checkReading(ok, w), ok).toBe(true)
+    expect(checkReading('きゅうじ', w)).toBe(false)
+    // Ett annat ord i ordlistan med samma svenska betydelse är en godkänd synonym …
+    const syn = word(2, { word: '休み', reading: 'やすみ', meaning: 'Ledighet / ledig dag.' })
+    const other = word(3, { word: '平日', reading: 'へいじつ', meaning: 'Vardag.' })
+    expect(checkReading('やすみ', w, [w, syn, other])).toBe(true)
+    expect(checkReading('休み', w, [w, syn, other])).toBe(true)
+    // … men inte ett ord som betyder något annat, och inte utan att ordlistan skickas med.
+    expect(checkReading('へいじつ', w, [w, syn, other])).toBe(false)
+    expect(checkReading('やすみ', w)).toBe(false)
+    // Egna japanska alternativ (sparade via "Jag hade rätt") godkänns också.
+    expect(checkReading('おやすみ', { ...w, altJa: ['お休み'] })).toBe(false)
+    expect(checkReading('お休み', { ...w, altJa: ['お休み'] })).toBe(true)
+    expect(checkReading('オフ', { ...w, altJa: ['オフ'] })).toBe(true)
+    // Ord med mellanslag eller vågstreck i läsningen.
+    expect(checkReading('nantokanaranainokana', word(4, { word: 'なんとかならないのかな', reading: 'なんとか ならない の かな' }))).toBe(true)
+  })
+  it('ledtråden visar första tecknet och svarets längd', () => {
+    expect(hintFor(word(1, { reading: 'きゅうじつ' }), true)).toBe('きゅ・・・')
+    expect(hintFor(word(1, { reading: 'えんざい' }), true)).toBe('え・・・')
+    expect(hintFor(word(1, { reading: 'なんとか ならない' }), true)).toBe('な・・・・・・・')
+    expect(hintFor(word(1, { meaning: 'Ledig dag / helgdag.' }), false)).toBe('L···· ···')
+    expect(hintFor(word(1, { meaning: '気に病むな' }), false)).toBe('')
+  })
+  it('den svenska frågan avslöjar inte det japanska svaret', () => {
+    expect(meaningPrompt('Grubbla över, oroa sig för, ta åt sig. 気に病むな = Grubbla inte över det / oroa dig inte.')).toBe('Grubbla över, oroa sig för, ta åt sig.')
+    expect(meaningPrompt('Ta hål för piercing (だいぶ開けてる = har tagit ganska många hål).')).toBe('Ta hål för piercing.')
+    expect(meaningPrompt('Polis (myndigheten).')).toBe('Polis (myndigheten).')
+    expect(meaningPrompt('思ったほど〜ない = inte så … som jag trodde.')).not.toMatch(/[\u3040-\u30ff\u3400-\u9fff]/)
   })
   it('rättar läsning oavsett romaji, katakana och mellanslag', () => {
     const w = word(1, { word: '冤罪', reading: 'えんざい' })

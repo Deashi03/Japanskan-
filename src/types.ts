@@ -12,6 +12,8 @@ export interface Word {
   distinctions: Distinction[]
   /** Andra svenska översättningar som godkänns som svar och går att söka på. */
   synonyms?: string[]
+  /** Andra japanska ord som godkänns när man ska skriva ordet på japanska. */
+  altJa?: string[]
   list: string
   createdAt: number
   order: number

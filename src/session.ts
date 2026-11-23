@@ -209,11 +209,44 @@ export function buildExercise(type: ExerciseType, word: Word, all: Word[], opts:
 
 const norm = (s: string) => toHiragana(s, { convertLongVowelMark: false }).replace(/[\s　・.。、,]/g, '')
 
-export function checkReading(input: string, word: Word): boolean {
-  const target = norm(word.reading)
+/** Alla sätt att skriva ett japanskt svar som ska räknas som samma sak. */
+function japaneseForms(input: string): string[] {
+  const raw = input.trim()
   // Romaji tolkas både direkt ("hannin") och på tangentbordsvis ("hannnin").
-  const candidates = [norm(input), norm(toKana(input.trim().toLowerCase(), { IMEMode: true }))]
-  return input.trim().length > 0 && (candidates.includes(target) || input.trim() === word.word)
+  return [raw.replace(/[\s\u3000]/g, ''), norm(raw), norm(toKana(raw.toLowerCase(), { IMEMode: true }))]
+}
+
+const matchesWord = (forms: string[], w: Pick<Word, 'word' | 'reading'>) =>
+  forms.includes(w.word.replace(/[\s\u3000〜～]/g, '')) || forms.includes(norm(w.word)) || forms.includes(norm(w.reading))
+
+/** Rättar ett japanskt svar. Godkänt är ordets vanliga skrivsätt, bara hiragana (eller
+ *  katakana/romaji), ordets egna japanska alternativ – och, om `all` ges, vilket annat ord
+ *  i ordlistan som helst som betyder samma sak på svenska (en synonym). */
+export function checkReading(input: string, word: Word, all: Iterable<Word> = []): boolean {
+  if (!input.trim()) return false
+  const forms = japaneseForms(input)
+  if (matchesWord(forms, word)) return true
+  if (word.altJa?.some((alt) => matchesWord(forms, { word: alt, reading: alt }))) return true
+  const mine = new Set(swedishAnswers(word.meaning))
+  for (const other of all) {
+    if (other.id === word.id || !matchesWord(forms, other)) continue
+    if (swedishAnswers(other.meaning).some((x) => mine.has(x))) return true
+  }
+  return false
+}
+
+/** Betydelsen utan japanska inslag – används när den svenska betydelsen är själva frågan,
+ *  så att exempel som "気に病むな = …" inte avslöjar svaret. */
+export function meaningPrompt(meaning: string): string {
+  const JA_CHAR = /[\u3040-\u30ff\u3400-\u9fff]/
+  if (!JA_CHAR.test(meaning)) return meaning
+  const kept = meaning
+    .replace(/\s*\([^)]*\)|\s*（[^）]*）/g, (m) => (JA_CHAR.test(m) ? '' : m))
+    .split(/(?<=[.!?])\s+/)
+    .filter((sentence) => !JA_CHAR.test(sentence))
+    .join(' ')
+    .trim()
+  return kept.length >= 3 ? kept : meaning.replace(/[\u3040-\u30ff\u3400-\u9fff〜～ー]+/g, '…')
 }
 
 /** Det som visas medan man skriver: romaji omvandlat till hiragana. */
@@ -272,4 +305,17 @@ export function checkSwedish(input: string, word: Word): boolean {
     if (alt.length >= 4 && !FUNCTION_WORDS.has(alt) && words(answer).includes(alt)) return true
   }
   return false
+}
+
+/** Ledtråd i skrivövningarna: första tecknet i svaret och hur långt det är. */
+export function hintFor(word: Word, toJapanese: boolean): string {
+  if (toJapanese) {
+    const reading = word.reading.replace(/[\s\u3000]/g, '')
+    const chars = [...reading]
+    // Små tecken (ゃゅょっ) hör ihop med tecknet före och visas tillsammans med det.
+    const first = chars[0] + (/[ゃゅょぁぃぅぇぉャュョァィゥェォ]/.test(chars[1] ?? '') ? chars[1] : '')
+    return first + '・'.repeat(Math.max(0, chars.length - [...first].length))
+  }
+  const answer = swedishAnswers(word.meaning)[0] ?? ''
+  return answer ? answer[0].toUpperCase() + answer.slice(1).replace(/[^\s-]/g, '·') : ''
 }
