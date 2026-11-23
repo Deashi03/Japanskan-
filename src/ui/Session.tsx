@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { canSpeak, confetti, fx, speak, speakAll, stopSpeaking } from '../fx'
+import { canSpeak, celebrate, FINALE_AT, fx, HIT_TIMES, prepareHarp, speak, speakAll, stopSpeaking } from '../fx'
 import { afterIntro, buildExercise, buildQueue, extraQueue, nextFresh, overtimeQueue, requeue, shuffle, type Exercise, type QItem } from '../session'
 import { autoRating, exercisesFor, formatDue, knownCard, newCard, pickExercise, schedule, State } from '../srs'
 import { computeStats } from '../stats'
@@ -109,8 +109,7 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
     stopSpeaking()
     if (tally.answered === 0 && tally.newWords === 0 && known === 0) return onExit()
     setPhase('summary')
-    fx.complete()
-    confetti()
+    celebrate()
     void syncNow()
   }
 
@@ -130,6 +129,12 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
     setTurnNo((n) => n + 1)
     fx.whoosh()
   }
+
+  // Harpans toner räknas ut i bakgrunden medan passet pågår, så att avslutningen startar direkt.
+  useEffect(() => {
+    const t = setTimeout(prepareHarp, 3000)
+    return () => clearTimeout(t)
+  }, [])
 
   // Ett nytt ord presenteras: liten fanfar och uppläsning av ordet.
   useEffect(() => {
@@ -449,22 +454,35 @@ function Summary({ tally, known, elapsed, onExit }: { tally: Tally; known: numbe
     [tally.newWords, '', 'nya ord'],
     [Math.max(1, Math.round(elapsed / 60_000)), '', 'minuter'],
   ]
+  // Allt på skärmen är tajmat mot musiken: en ring slår ut på varje ackord, och sviten
+  // och siffrorna landar på slutackordet.
+  const ms = (seconds: number) => `calc(var(--lag, 0ms) + ${Math.round(seconds * 1000)}ms)`
   return (
     <div className="session summary">
+      <div className="rays" aria-hidden="true" />
       <div className="session-body center">
-        <div className="trophy"><span>🎉</span></div>
-        <h1 className="rise-in">Passet är klart!</h1>
-        <div className="streak lit big flame-in"><Icon name="flame" size={30} /><strong><CountUp to={stats.current} delay={500} /></strong><span>{stats.current === 1 ? 'dag i rad' : 'dagar i rad'}</span></div>
+        <div className="medal-wrap" aria-hidden="true">
+          {HIT_TIMES.map((t, i) => <i className={'shock' + (t === FINALE_AT ? ' big' : '')} style={{ animationDelay: ms(t) }} key={i} />)}
+          <div className="medal" style={{ '--finale': ms(FINALE_AT) } as React.CSSProperties}>
+            <Icon name="check" size={56} />
+          </div>
+        </div>
+        <h1 className="done-title" aria-label="Passet är klart!">
+          {[...'Passet är klart!'].map((ch, i) => <span aria-hidden="true" style={{ animationDelay: ms(0.25 + i * 0.03) }} key={i}>{ch === ' ' ? '\u00a0' : ch}</span>)}
+        </h1>
+        <div className="streak lit big finale-pop" style={{ animationDelay: ms(FINALE_AT) }}>
+          <Icon name="flame" size={30} /><strong><CountUp to={stats.current} delay={FINALE_AT * 1000} /></strong><span>{stats.current === 1 ? 'dag i rad' : 'dagar i rad'}</span>
+        </div>
         <div className="tiles two">
           {tiles.map(([value, suffix, label], i) => (
-            <div className="tile tile-in" style={{ '--i': i } as React.CSSProperties} key={label}>
-              <strong><CountUp to={value} suffix={suffix} delay={300 + i * 120} /></strong>
+            <div className="tile tile-in" style={{ animationDelay: ms(HIT_TIMES[Math.min(i, 2)] + (i === 3 ? 0.3 : 0)) }} key={label}>
+              <strong><CountUp to={value} suffix={suffix} delay={(HIT_TIMES[Math.min(i, 2)] + (i === 3 ? 0.3 : 0)) * 1000} /></strong>
               <span>{label}</span>
             </div>
           ))}
         </div>
-        {known > 0 && <p className="muted">{known} ord markerade som ”kan redan”</p>}
-        {tally.bestCombo >= 3 && <p className="muted">Längsta svit: {tally.bestCombo} rätt i rad</p>}
+        {known > 0 && <p className="muted rise-late">{known} ord markerade som ”kan redan”</p>}
+        {tally.bestCombo >= 3 && <p className="muted rise-late">Längsta svit: {tally.bestCombo} rätt i rad</p>}
       </div>
       <footer className="session-foot">
         <button className="btn primary big" autoFocus onClick={onExit}>Klar</button>

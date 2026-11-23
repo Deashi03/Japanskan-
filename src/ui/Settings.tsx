@@ -58,6 +58,16 @@ export function SettingsView() {
       <section className="card">
         <h2>Ljud</h2>
         <Toggle label="Ljudeffekter" value={s.sound} onChange={(v) => { set({ sound: v }); if (v) setTimeout(() => fx.correct(), 50) }} />
+        {s.sound && (
+          <div className="setting">
+            <span>Fördröj animationer<small>Öka om ljudet hörs efter animationen. {s.audioLag} ms extra.</small></span>
+            <div className="stepper">
+              <button type="button" onClick={() => set({ audioLag: Math.max(0, s.audioLag - 25) })} aria-label="Minska fördröjningen">−</button>
+              <output>{s.audioLag}</output>
+              <button type="button" onClick={() => { set({ audioLag: Math.min(300, s.audioLag + 25) }); setTimeout(() => fx.correct(), 30) }} aria-label="Öka fördröjningen">+</button>
+            </div>
+          </div>
+        )}
         <Toggle label="Läs upp nya ord automatiskt" hint="Ordet och exempelmeningarna" value={s.autoSpeak} onChange={(v) => set({ autoSpeak: v })} />
         <Toggle label="Vibration" hint="Fungerar på Android" value={s.haptics} onChange={(v) => set({ haptics: v })} />
       </section>

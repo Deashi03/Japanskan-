@@ -80,6 +80,8 @@ export interface Settings {
   wishlist: string
   /** Varifrån nya ord hämtas: '' = importordning, '*' = växla mellan listorna, annars en listas namn. */
   newFrom: string
+  /** Extra fördröjning av animationer i millisekunder, om ljudet hörs efter animationen. */
+  audioLag: number
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -94,6 +96,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autoSpeak: true,
   wishlist: '',
   newFrom: '',
+  audioLag: 0,
 }
 
 export type Kind = 'word' | 'card' | 'log' | 'settings'
