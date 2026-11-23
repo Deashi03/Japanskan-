@@ -21,7 +21,10 @@ export function shuffle<T>(arr: T[], rnd: () => number = Math.random): T[] {
   return a
 }
 
-const byOrder = (a: Word, b: Word) => a.createdAt - b.createdAt || a.order - b.order
+/** Nya ord introduceras i den ordning de importerades – men ord man själv valt går före,
+ *  i den ordning de valdes. */
+export const byOrder = (a: Word, b: Word) =>
+  Number(!a.priority) - Number(!b.priority) || (a.priority ?? 0) - (b.priority ?? 0) || a.createdAt - b.createdAt || a.order - b.order
 
 /** Hur många nya ord som får introduceras i en session som startar nu. */
 export function newQuota(snap: Snapshot, now: number): number {
@@ -36,13 +39,33 @@ export function newQuota(snap: Snapshot, now: number): number {
 export function countDue(snap: Snapshot, now: number) {
   let due = 0
   let fresh = 0
+  let chosen = 0
   for (const w of snap.words.values()) {
     if (w.suspended) continue
     const c = snap.cards.get(w.id)
-    if (!c) fresh++
-    else if (c.due <= now) due++
+    if (!c) {
+      fresh++
+      if (w.priority) chosen++
+    } else if (c.due <= now) due++
   }
-  return { due, fresh, newNow: Math.min(fresh, newQuota(snap, now)) }
+  return { due, fresh, chosen, newNow: Math.min(fresh, newQuota(snap, now)) }
+}
+
+/** Alla nya (ej påbörjade) ord i den ordning de ska introduceras.
+ *  Ord man själv valt går alltid först. Därefter styr inställningen: importordning,
+ *  en viss lista först, eller växelvis ett ord ur varje lista. */
+export function freshWords(snap: Snapshot, exclude: Set<string> = new Set()): Word[] {
+  const fresh = [...snap.words.values()].filter((w) => !w.suspended && !snap.cards.has(w.id) && !exclude.has(w.id)).sort(byOrder)
+  const from = snap.settings.newFrom
+  if (!from) return fresh
+  const chosen = fresh.filter((w) => w.priority)
+  const rest = fresh.filter((w) => !w.priority)
+  if (from !== '*') return [...chosen, ...rest.filter((w) => w.list === from), ...rest.filter((w) => w.list !== from)]
+  const lists = new Map<string, Word[]>()
+  for (const w of rest) lists.set(w.list, [...(lists.get(w.list) ?? []), w])
+  const mixed: Word[] = []
+  for (let i = 0; mixed.length < rest.length; i++) for (const words of lists.values()) if (words[i]) mixed.push(words[i])
+  return [...chosen, ...mixed]
 }
 
 /** Sessionens kö: först nya ord (introduktionskort), sedan repetitioner med mest försenade först. */
@@ -50,14 +73,13 @@ export function buildQueue(snap: Snapshot, now: number): QItem[] {
   const active = [...snap.words.values()].filter((w) => !w.suspended)
   const unfinishedIntros: Word[] = []
   const due: Word[] = []
-  const fresh: Word[] = []
   for (const w of active) {
     const c = snap.cards.get(w.id)
-    if (!c) fresh.push(w)
-    else if (c.state === State.New) unfinishedIntros.push(w)
+    if (!c) continue
+    if (c.state === State.New) unfinishedIntros.push(w)
     else if (c.due <= now) due.push(w)
   }
-  fresh.sort(byOrder)
+  const fresh = freshWords(snap)
   due.sort((a, b) => snap.cards.get(a.id)!.due - snap.cards.get(b.id)!.due)
   const intros = [...unfinishedIntros, ...fresh.slice(0, newQuota(snap, now))]
   return [
@@ -70,10 +92,7 @@ const isNewPhase = (q: QItem) => q.kind === 'intro' || !!q.learning
 
 /** Nästa nya ord som inte redan ligger i kön – används när man markerar ett ord som "kan redan". */
 export function nextFresh(snap: Snapshot, queue: QItem[]): Word | undefined {
-  const queued = new Set(queue.map((q) => q.wordId))
-  return [...snap.words.values()]
-    .filter((w) => !w.suspended && !snap.cards.has(w.id) && !queued.has(w.id))
-    .sort(byOrder)[0]
+  return freshWords(snap, new Set(queue.map((q) => q.wordId)))[0]
 }
 
 /** Efter ett introduktionskort kommer ordets första fråga ett steg senare. */
@@ -101,6 +120,12 @@ export function requeue(queue: QItem[], items: { item: QItem; correct: boolean; 
     rest.splice(Math.min(4, pos, rest.length), 0, { ...item, learning: true })
   }
   return rest
+}
+
+/** När tiden är ute: bara frågorna som behövs för att göra klart ord som redan
+ *  håller på att läras in. Ord som inte hunnit presenteras och vanliga repetitioner väntar. */
+export function overtimeQueue(queue: QItem[]): QItem[] {
+  return queue.filter((q) => q.kind === 'quiz' && q.learning && !q.extra)
 }
 
 /** Extra övning när inget är schemalagt: problemord först, sedan de svagaste orden. */

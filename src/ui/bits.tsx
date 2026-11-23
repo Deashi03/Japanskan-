@@ -1,4 +1,5 @@
-import type { ReactNode } from 'react'
+import { useMemo, type CSSProperties, type ReactNode } from 'react'
+import { furigana, type Seg } from '../furigana'
 import { canSpeak, speak } from '../fx'
 import { useStore } from '../store'
 import type { Word } from '../types'
@@ -55,12 +56,22 @@ const KANA_ONLY = /^[\u3040-\u30ffー・〜～\s]+$/
 
 /** Ordet med läsningen (furigana) ovanför. */
 export function Furi({ word, reading }: { word: string; reading: string }) {
-  if (KANA_ONLY.test(word) || !reading || reading === word) return <Ja>{word}</Ja>
+  const plain = KANA_ONLY.test(word) || !reading || reading === word
+  // Läsningen läggs över varje kanjigrupp för sig (開[あ]ける i stället för hela ordet),
+  // så att långa ord kan radbrytas och kana inte får kana över sig.
+  const segs = useMemo(() => (plain ? null : furigana(word, reading)), [plain, word, reading])
+  // --len låter stilmallen krympa texten så att ordet får plats där det visas.
+  const style = { '--len': Math.max(2, [...word].length) } as CSSProperties
   return (
-    <ruby lang="ja" className="ja furi">
-      {word}
-      <rt>{reading}</rt>
-    </ruby>
+    <span lang="ja" className="ja furi-word" style={style}>
+      {plain ? (
+        word
+      ) : segs ? (
+        segs.map((s, i) => (s.r ? <ruby className="furi" key={i}>{s.t}<rt>{s.r}</rt></ruby> : <span key={i}>{s.t}</span>))
+      ) : (
+        <ruby className="furi">{word}<rt>{reading}</rt></ruby>
+      )}
+    </span>
   )
 }
 
@@ -70,7 +81,7 @@ export function WordHead({ word }: { word: Word }) {
       <div className="wc-head">
         <div>
           <div className="wc-reading"><Ja>{word.reading}</Ja></div>
-          <div className="wc-word"><Ja>{word.word}</Ja></div>
+          <div className="wc-word" style={{ '--len': Math.max(2, [...word.word].length) } as CSSProperties}><Ja>{word.word}</Ja></div>
         </div>
         <SpeakButton text={word.word} />
       </div>
@@ -103,10 +114,9 @@ export function WordExamples({ word }: { word: Word }) {
       {word.examples.map((ex, i) => (
         <div className="wc-example" key={i}>
           <div className="wc-ex-ja">
-            <Ja>{ex.ja}</Ja>
+            <FuriText ja={ex.ja} reading={ex.reading} show={showReading} word={word} />
             <SpeakButton text={ex.ja} small />
           </div>
-          {showReading && ex.reading && <div className="muted"><Ja>{ex.reading}</Ja></div>}
           <div>{ex.sv}</div>
         </div>
       ))}
@@ -127,6 +137,33 @@ export function WordDistinctions({ word }: { word: Word }) {
         ))}
       </ul>
     </section>
+  )
+}
+
+/** En mening med läsningen ovanför varje kanjigrupp. Går det inte att räkna ut
+ *  visas läsningen på en egen rad under meningen. */
+export function FuriText({ ja, reading, show = true, word }: { ja: string; reading: string; show?: boolean; word?: Word }) {
+  const segs = useMemo(() => {
+    if (!show) return null
+    const at = word ? ja.indexOf(word.word) : -1
+    return furigana(ja, reading, at >= 0 ? { at, len: word!.word.length, reading: word!.reading } : undefined)
+  }, [ja, reading, show, word])
+  if (!show || !reading) return <Ja>{ja}</Ja>
+  if (!segs)
+    return (
+      <span>
+        <Ja>{ja}</Ja>
+        <span className="reading-line"><Ja>{reading}</Ja></span>
+      </span>
+    )
+  return <Segs segs={segs} />
+}
+
+export function Segs({ segs }: { segs: Seg[] }) {
+  return (
+    <span lang="ja" className="ja">
+      {segs.map((s, i) => (s.r ? <ruby className="furi sent" key={i}>{s.t}<rt>{s.r}</rt></ruby> : <span key={i}>{s.t}</span>))}
+    </span>
   )
 }
 

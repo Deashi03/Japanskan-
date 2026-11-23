@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { burst, fx, speak } from '../fx'
 import { checkReading, checkSwedish, kanaPreview, shuffle, type Exercise } from '../session'
-import { Furi, Icon, Ja, SpeakButton } from './bits'
+import { furigana } from '../furigana'
+import { Furi, FuriText, Icon, Ja, Segs, SpeakButton } from './bits'
 
-export interface Result { wordId: string; correct: boolean }
+export interface Result { wordId: string; correct: boolean; answer?: string }
 type Done = (results: Result[], ms: number) => void
 
 function useElapsed() {
@@ -104,8 +105,7 @@ export function Sentence({ ex, onDone }: { ex: Extract<Exercise, { type: 'senten
         </button>
         {showText ? (
           <div className="sentence-text pop-in">
-            <Ja>{ex.example.ja}</Ja>
-            {ex.example.reading && <div className="muted small"><Ja>{ex.example.reading}</Ja></div>}
+            <FuriText ja={ex.example.ja} reading={ex.example.reading} word={ex.word} />
           </div>
         ) : (
           <button type="button" className="btn ghost small" onClick={() => setShowText(true)}>Visa texten</button>
@@ -130,6 +130,15 @@ export function Sentence({ ex, onDone }: { ex: Extract<Exercise, { type: 'senten
 export function Cloze({ ex, onDone }: { ex: Extract<Exercise, { type: 'cloze' }>; onDone: Done }) {
   const [picked, setPicked] = useState<string | null>(null)
   const elapsed = useElapsed()
+  // Furigana för resten av meningen. Gränser runt luckan gör att inget kanji på andra
+  // sidan luckan råkar få målordets läsning.
+  const [before, after] = useMemo(() => {
+    const at = ex.before.length
+    const end = at + ex.word.word.length
+    const segs = furigana(ex.example.ja, ex.example.reading, { at, len: ex.word.word.length, reading: ex.word.reading })
+    if (!segs) return [null, null]
+    return [segs.filter((s) => s.start < at), segs.filter((s) => s.start >= end)]
+  }, [ex])
 
   function pick(id: string, el: Element | null) {
     if (picked) return
@@ -144,9 +153,9 @@ export function Cloze({ ex, onDone }: { ex: Extract<Exercise, { type: 'cloze' }>
       <p className="ex-label">Vilket ord saknas?</p>
       <div className="cloze">
         <div className="cloze-ja">
-          <Ja>{ex.before}</Ja>
+          {before ? <Segs segs={before} /> : <Ja>{ex.before}</Ja>}
           <span className={'gap' + (picked ? ' filled' : '')}>{picked ? <Furi word={ex.word.word} reading={ex.word.reading} /> : '？'}</span>
-          <Ja>{ex.after}</Ja>
+          {after ? <Segs segs={after} /> : <Ja>{ex.after}</Ja>}
           {picked && <SpeakButton text={ex.example.ja} small />}
         </div>
         <div className="cloze-sv">{ex.example.sv}</div>
@@ -185,7 +194,7 @@ export function Typing({ ex, onDone }: { ex: Extract<Exercise, { type: 'type_sv'
     setState(correct ? 'right' : 'wrong')
     if (correct) burst(input.current)
     input.current?.blur()
-    onDone([{ wordId: ex.word.id, correct }], elapsed())
+    onDone([{ wordId: ex.word.id, correct, answer: giveUp ? undefined : value.trim() }], elapsed())
   }
 
   return (
