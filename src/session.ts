@@ -209,11 +209,44 @@ export function buildExercise(type: ExerciseType, word: Word, all: Word[], opts:
 
 const norm = (s: string) => toHiragana(s, { convertLongVowelMark: false }).replace(/[\s　・.。、,]/g, '')
 
-export function checkReading(input: string, word: Word): boolean {
-  const target = norm(word.reading)
+/** Alla sätt att skriva ett japanskt svar som ska räknas som samma sak. */
+function japaneseForms(input: string): string[] {
+  const raw = input.trim()
   // Romaji tolkas både direkt ("hannin") och på tangentbordsvis ("hannnin").
-  const candidates = [norm(input), norm(toKana(input.trim().toLowerCase(), { IMEMode: true }))]
-  return input.trim().length > 0 && (candidates.includes(target) || input.trim() === word.word)
+  return [raw.replace(/[\s\u3000]/g, ''), norm(raw), norm(toKana(raw.toLowerCase(), { IMEMode: true }))]
+}
+
+const matchesWord = (forms: string[], w: Pick<Word, 'word' | 'reading'>) =>
+  forms.includes(w.word.replace(/[\s\u3000〜～]/g, '')) || forms.includes(norm(w.word)) || forms.includes(norm(w.reading))
+
+/** Rättar ett japanskt svar. Godkänt är ordets vanliga skrivsätt, bara hiragana (eller
+ *  katakana/romaji), ordets egna japanska alternativ – och, om `all` ges, vilket annat ord
+ *  i ordlistan som helst som betyder samma sak på svenska (en synonym). */
+export function checkReading(input: string, word: Word, all: Iterable<Word> = []): boolean {
+  if (!input.trim()) return false
+  const forms = japaneseForms(input)
+  if (matchesWord(forms, word)) return true
+  if (word.altJa?.some((alt) => matchesWord(forms, { word: alt, reading: alt }))) return true
+  const mine = new Set(swedishAnswers(word.meaning))
+  for (const other of all) {
+    if (other.id === word.id || !matchesWord(forms, other)) continue
+    if (swedishAnswers(other.meaning).some((x) => mine.has(x))) return true
+  }
+  return false
+}
+
+/** Betydelsen utan japanska inslag – används när den svenska betydelsen är själva frågan,
+ *  så att exempel som "気に病むな = …" inte avslöjar svaret. */
+export function meaningPrompt(meaning: string): string {
+  const JA_CHAR = /[\u3040-\u30ff\u3400-\u9fff]/
+  if (!JA_CHAR.test(meaning)) return meaning
+  const kept = meaning
+    .replace(/\s*\([^)]*\)|\s*（[^）]*）/g, (m) => (JA_CHAR.test(m) ? '' : m))
+    .split(/(?<=[.!?])\s+/)
+    .filter((sentence) => !JA_CHAR.test(sentence))
+    .join(' ')
+    .trim()
+  return kept.length >= 3 ? kept : meaning.replace(/[\u3040-\u30ff\u3400-\u9fff〜～ー]+/g, '…')
 }
 
 /** Det som visas medan man skriver: romaji omvandlat till hiragana. */

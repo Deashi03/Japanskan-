@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { burst, fx, speak } from '../fx'
-import { checkReading, checkSwedish, kanaPreview, shuffle, type Exercise } from '../session'
+import { checkReading, checkSwedish, kanaPreview, meaningPrompt, shuffle, type Exercise } from '../session'
+import { getSnap } from '../store'
 import { furigana } from '../furigana'
 import { Furi, FuriText, Icon, Ja, Segs, SpeakButton } from './bits'
 
@@ -60,7 +61,7 @@ export function MultipleChoice({ ex, onDone }: { ex: Extract<Exercise, { type: '
           <SpeakButton text={ex.word.word} />
         </div>
       ) : (
-        <div className="prompt-sv">{ex.word.meaning}</div>
+        <div className="prompt-sv">{meaningPrompt(ex.word.meaning)}</div>
       )}
       <div className={'options' + (toSwedish ? '' : ' grid')}>
         {ex.options.map((o, i) => {
@@ -190,7 +191,7 @@ export function Typing({ ex, onDone }: { ex: Extract<Exercise, { type: 'type_sv'
   function submit(giveUp = false) {
     if (state) return
     if (!giveUp && !value.trim()) return
-    const correct = !giveUp && (toJapanese ? checkReading(value, ex.word) : checkSwedish(value, ex.word))
+    const correct = !giveUp && (toJapanese ? checkReading(value, ex.word, getSnap().words.values()) : checkSwedish(value, ex.word))
     setState(correct ? 'right' : 'wrong')
     if (correct) burst(input.current)
     input.current?.blur()
@@ -207,7 +208,7 @@ export function Typing({ ex, onDone }: { ex: Extract<Exercise, { type: 'type_sv'
     >
       <p className="ex-label">{toJapanese ? 'Skriv ordet på japanska' : 'Skriv betydelsen på svenska'}</p>
       {toJapanese ? (
-        <div className="prompt-sv">{ex.word.meaning}</div>
+        <div className="prompt-sv">{meaningPrompt(ex.word.meaning)}</div>
       ) : (
         <div className="prompt-ja">
           <Furi word={ex.word.word} reading={ex.word.reading} />
@@ -221,7 +222,7 @@ export function Typing({ ex, onDone }: { ex: Extract<Exercise, { type: 'type_sv'
         value={value}
         onChange={(e) => setValue(e.target.value)}
         readOnly={!!state}
-        placeholder={toJapanese ? 'ひらがな eller romaji' : 'Svenska'}
+        placeholder={toJapanese ? 'Kanji, ひらがな eller romaji' : 'Svenska'}
         aria-label="Ditt svar"
         autoCapitalize="none"
         autoCorrect="off"

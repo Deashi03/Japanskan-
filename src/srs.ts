@@ -8,9 +8,9 @@ const scheduler = fsrs(
     request_retention: 0.9,
     enable_fuzz: true,
     enable_short_term: true,
-    // Ett nytt ord måste klaras fem gånger i rad – en gång per övningstyp –
+    // Ett nytt ord måste klaras sex gånger i rad – en gång per övningstyp –
     // innan det går över till långa intervall.
-    learning_steps: ['1m', '2m', '4m', '7m', '10m'],
+    learning_steps: ['1m', '2m', '4m', '6m', '8m', '10m'],
     relearning_steps: ['10m'],
   }),
 )
@@ -117,10 +117,11 @@ export const STATUS_LABEL: Record<Status, string> = {
   mature: 'Moget',
 }
 
-/** Ordningen ett nytt ord går igenom: flerval, dra till betydelse, lyssna, svenska → japanska, skriv på svenska. */
-export const LEARNING_ORDER: ExerciseType[] = ['mc_ja_sv', 'match', 'listen', 'mc_sv_ja', 'type_sv']
-const RELEARNING: ExerciseType[] = ['type_sv', 'listen', 'mc_sv_ja']
-const YOUNG: ExerciseType[] = ['type_sv', 'listen', 'cloze', 'mc_sv_ja']
+/** Ordningen ett nytt ord går igenom: flerval, dra till betydelse, lyssna, svenska → japanska,
+ *  skriv på svenska och sist skriv på japanska. */
+export const LEARNING_ORDER: ExerciseType[] = ['mc_ja_sv', 'match', 'listen', 'mc_sv_ja', 'type_sv', 'type_from_sv']
+const RELEARNING: ExerciseType[] = ['type_sv', 'type_from_sv', 'listen']
+const YOUNG: ExerciseType[] = ['type_from_sv', 'type_sv', 'listen', 'cloze', 'mc_sv_ja']
 const MATURE: ExerciseType[] = ['type_from_sv', 'sentence', 'type_sv', 'cloze', 'listen']
 
 /** Vilka övningstyper som passar ordet just nu – svårare ju bättre man kan det.

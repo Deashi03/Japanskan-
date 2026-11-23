@@ -503,3 +503,11 @@ ruby.furi.sent rt { font-size: 0.56em; }
 .sheet { max-height: 78dvh; overflow-y: auto; }
 .update-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border-radius: 14px; background: var(--good-soft); color: var(--good-ink); font-weight: 600; animation: risein 0.4s; }
 .select.narrow { width: auto; max-width: 55%; min-height: 40px; }
+
+/* 0.5 */
+.page-head .row { gap: 8px; }
+.add-wish { margin-top: 14px; max-width: 100%; white-space: normal; height: auto; padding: 10px 16px; }
+.added { margin-top: 14px; color: var(--good-ink); font-weight: 600; }
+.page-head { flex-wrap: wrap; row-gap: 8px; }
+.page-head h1 { white-space: nowrap; }
+.page-head .btn { white-space: nowrap; padding: 0 12px; }

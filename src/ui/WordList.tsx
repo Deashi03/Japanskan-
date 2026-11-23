@@ -4,6 +4,7 @@ import { byOrder } from '../session'
 import { actions, useStore } from '../store'
 import type { Breakdown, Distinction, Example, Word } from '../types'
 import { Icon, Ja, Modal, WordCard } from './bits'
+import { addToWishlist, wishCount, Wishlist } from './Wishlist'
 
 type Filter = 'all' | 'chosen' | 'new' | 'learning' | 'known' | 'problem' | 'suspended'
 const FILTERS: [Filter, string][] = [
@@ -23,6 +24,9 @@ export function WordList({ onImport }: { onImport: () => void }) {
   const [list, setList] = useState('')
   const [openId, setOpenId] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
+  const [wishOpen, setWishOpen] = useState(false)
+  const [wished, setWished] = useState('')
+  const wishes = wishCount(snap.settings.wishlist)
   const now = Date.now()
 
   const lists = useMemo(() => [...new Set([...snap.words.values()].map((w) => w.list))].sort(), [snap.words])
@@ -54,7 +58,10 @@ export function WordList({ onImport }: { onImport: () => void }) {
     <div className="page">
       <header className="page-head">
         <h1>Ordlista <span className="muted count">{snap.words.size}</span></h1>
-        <button className="btn primary" onClick={onImport}><Icon name="plus" size={18} /> Importera</button>
+        <div className="row">
+          <button className="btn" onClick={() => setWishOpen(true)}>Önskelista{wishes > 0 ? ` (${wishes})` : ''}</button>
+          <button className="btn primary" onClick={onImport}><Icon name="plus" size={18} /> Importera</button>
+        </div>
       </header>
       <input className="search" type="search" placeholder="Sök på japanska eller svenska" value={query} onChange={(e) => setQuery(e.target.value)} />
       {filter === 'chosen' && <p className="muted small">Valda ord introduceras före alla andra nya ord, i den ordning du valde dem. Är de fler än passet rymmer kommer resten i nästa pass.</p>}
@@ -88,7 +95,24 @@ export function WordList({ onImport }: { onImport: () => void }) {
         </div>
       )}
       {words.length === 0 ? (
-        <p className="muted center pad">{snap.words.size ? 'Inga ord matchar.' : 'Inga ord än – importera en lista för att börja.'}</p>
+        <div className="center pad">
+          <p className="muted">{snap.words.size ? 'Inga ord matchar.' : 'Inga ord än – importera en lista för att börja.'}</p>
+          {query.trim() && (
+            wished === query.trim() ? (
+              <p className="added">”{wished}” ligger nu i önskelistan.</p>
+            ) : (
+              <button
+                className="btn primary add-wish"
+                onClick={() => {
+                  addToWishlist(query)
+                  setWished(query.trim())
+                }}
+              >
+                <Icon name="plus" size={18} /> Lägg ”{query.trim()}” i önskelistan
+              </button>
+            )
+          )}
+        </div>
       ) : (
         <ul className="wordlist">
           {words.map((w) => {
@@ -158,6 +182,11 @@ export function WordList({ onImport }: { onImport: () => void }) {
           </div>
         </Modal>
       )}
+      {wishOpen && (
+        <Modal title="Önskelista" onClose={() => setWishOpen(false)}>
+          <Wishlist />
+        </Modal>
+      )}
       {open && editing && (
         <WordEditor
           word={open}
@@ -194,6 +223,7 @@ function Rows<T extends Record<string, string>>({ title, rows, fields, onChange 
 function WordEditor({ word, onSave, onClose }: { word: Word; onSave: (w: Word) => void; onClose: () => void }) {
   const [w, setW] = useState(word)
   const [synonyms, setSynonyms] = useState((word.synonyms ?? []).join(', '))
+  const [altJa, setAltJa] = useState((word.altJa ?? []).join('、'))
   const valid = w.word.trim() && w.reading.trim() && w.meaning.trim()
   return (
     <Modal title="Redigera ord" onClose={onClose}>
@@ -208,6 +238,7 @@ function WordEditor({ word, onSave, onClose }: { word: Word; onSave: (w: Word) =
             reading: w.reading.trim(),
             meaning: w.meaning.trim(),
             synonyms: [...new Set(synonyms.split(/[,\n]/).map((x) => x.trim()).filter(Boolean))],
+            altJa: [...new Set(altJa.split(/[,、\n]/).map((x) => x.trim()).filter(Boolean))],
             breakdown: w.breakdown.filter((b) => b.kanji.trim() && b.meaning.trim()),
             examples: w.examples.filter((x) => x.ja.trim() && x.sv.trim()),
             distinctions: w.distinctions.filter((d) => d.word.trim() && d.meaning.trim()),
@@ -220,6 +251,10 @@ function WordEditor({ word, onSave, onClose }: { word: Word; onSave: (w: Word) =
         <label className="field">
           <span>Synonymer (godkända svar, åtskilda med komma)</span>
           <textarea rows={2} value={synonyms} onChange={(e) => setSynonyms(e.target.value)} />
+        </label>
+        <label className="field">
+          <span>Japanska alternativ (godkänns när du skriver på japanska)</span>
+          <input lang="ja" value={altJa} onChange={(e) => setAltJa(e.target.value)} placeholder="Åtskilda med komma" />
         </label>
         <label className="field"><span>Lista</span><input value={w.list} onChange={(e) => setW({ ...w, list: e.target.value })} /></label>
         <Rows<Breakdown & Record<string, string>> title="Nedbrytning" rows={w.breakdown as never} fields={[['kanji', 'Kanji'], ['reading', 'Läsning'], ['meaning', 'Betydelse']]} onChange={(breakdown) => setW({ ...w, breakdown })} />

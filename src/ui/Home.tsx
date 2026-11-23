@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { AI_PROMPT } from '../importer'
+import { useMemo, useState } from 'react'
 import { countDue } from '../session'
 import { computeStats } from '../stats'
-import { actions, useStore } from '../store'
+import { useStore } from '../store'
 import { fx } from '../fx'
 import { applyUpdate, useUpdateReady } from '../update'
 import { Icon } from './bits'
@@ -73,99 +72,6 @@ export function Home({ onStart, onImport }: { onStart: (minutes: number) => void
             )}
           </div>
         </>
-      )}
-      <Wishlist />
-    </div>
-  )
-}
-
-/** Anteckningslista för ord man stöter på och vill lära sig. "Kopiera och radera" lägger
- *  listan i urklipp – med AI-instruktionen först om man vill – och tömmer den. */
-function Wishlist() {
-  const saved = useStore().settings.wishlist
-  const [text, setText] = useState(saved)
-  const [withPrompt, setWithPrompt] = useState(() => localStorage.getItem('wishPrompt') !== '0')
-  const [undo, setUndo] = useState<string | null>(null)
-  const [error, setError] = useState(false)
-  const dirty = useRef(false)
-
-  // Ändringar från en annan enhet visas här, men bara när man inte själv håller på att skriva.
-  useEffect(() => {
-    if (!dirty.current) setText(saved)
-  }, [saved])
-  useEffect(() => {
-    if (!dirty.current) return
-    const t = setTimeout(() => {
-      dirty.current = false
-      void actions.saveSettings({ wishlist: text })
-    }, 700)
-    return () => clearTimeout(t)
-  }, [text])
-
-  const count = text.split(/[\n,、]/).filter((x) => x.trim()).length
-
-  async function copyAndClear() {
-    const words = text.trim()
-    if (!words) return
-    try {
-      await navigator.clipboard.writeText(withPrompt ? AI_PROMPT + words + '\n' : words)
-    } catch {
-      return setError(true)
-    }
-    setError(false)
-    setUndo(words)
-    setText('')
-    dirty.current = false
-    void actions.saveSettings({ wishlist: '' })
-    fx.pop(1)
-  }
-
-  return (
-    <div className="card">
-      <div className="row between">
-        <h2>Ord jag vill lära mig</h2>
-        {count > 0 && <span className="badge">{count} ord</span>}
-      </div>
-      <textarea
-        rows={4}
-        lang="ja"
-        placeholder="Skriv ett ord per rad, när du stöter på dem."
-        value={text}
-        onChange={(e) => {
-          dirty.current = true
-          setUndo(null)
-          setText(e.target.value)
-        }}
-        spellCheck={false}
-        autoCapitalize="none"
-      />
-      <label className="check">
-        <input
-          type="checkbox"
-          checked={withPrompt}
-          onChange={(e) => {
-            setWithPrompt(e.target.checked)
-            localStorage.setItem('wishPrompt', e.target.checked ? '1' : '0')
-          }}
-        />
-        <span>Ta med AI-instruktionen, så att listan kan klistras in direkt hos en AI</span>
-      </label>
-      <button className="btn primary" disabled={!text.trim()} onClick={() => void copyAndClear()}>Kopiera och radera</button>
-      {error && <div className="notice bad">Det gick inte att kopiera. Listan är kvar – markera texten och kopiera den manuellt.</div>}
-      {undo !== null && (
-        <div className="notice row between">
-          <span>Kopierat. Listan är tömd.</span>
-          <button
-            className="btn small"
-            onClick={() => {
-              setText(undo)
-              setUndo(null)
-              void actions.saveSettings({ wishlist: undo })
-            }}
-          >
-            Ångra
-          </button>
-        </div>
       )}
     </div>
   )

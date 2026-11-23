@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto'
 import { describe, expect, it } from 'vitest'
 import { parseWordFile, splitDuplicates } from './importer'
 import { autoRating, exercisesFor, isProblem, knownCard, LEARNING_ORDER, newCard, pickExercise, Rating, schedule, State } from './srs'
-import { afterIntro, buildExercise, buildQueue, checkReading, checkSwedish, extraQueue, freshWords, nextFresh, overtimeQueue, newQuota, requeue, type QItem } from './session'
+import { afterIntro, buildExercise, buildQueue, checkReading, checkSwedish, extraQueue, freshWords, meaningPrompt, nextFresh, overtimeQueue, newQuota, requeue, type QItem } from './session'
 import { dayKey, streaks } from './stats'
 import { isDark } from './fx'
 import { furigana } from './furigana'
@@ -57,16 +57,16 @@ describe('import', () => {
 })
 
 describe('schemaläggning', () => {
-  it('ett nytt ord går igenom alla fem övningstyper innan det blir inlärt', () => {
+  it('ett nytt ord går igenom alla sex övningstyper innan det blir inlärt', () => {
     let c = newCard(NOW)
     const seen: string[] = []
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 6; i++) {
       const type = pickExercise(word(1), c)
       seen.push(type)
       c = schedule(c, Rating.Good, NOW + i * 60_000, type)
-      expect(c.state).toBe(i < 4 ? State.Learning : State.Review)
+      expect(c.state).toBe(i < 5 ? State.Learning : State.Review)
     }
-    expect(seen).toEqual(['mc_ja_sv', 'match', 'listen', 'mc_sv_ja', 'type_sv'])
+    expect(seen).toEqual(['mc_ja_sv', 'match', 'listen', 'mc_sv_ja', 'type_sv', 'type_from_sv'])
     expect(c.due).toBeGreaterThan(NOW + DAY / 2)
   })
   it('fel svar under inlärningen börjar om från första övningstypen', () => {
@@ -296,6 +296,31 @@ describe('session', () => {
     for (const ok of ['således', 'Alltså', 'därför', 'av den anledningen', 'sålédes'.normalize('NFC')]) expect(checkSwedish(ok, yotte), ok).toBe(true)
     expect(checkSwedish('kanske', yotte)).toBe(false)
     expect(checkSwedish('således', word(5, { word: 'よって', meaning: 'Därför / följaktligen.' }))).toBe(false)
+  })
+  it('skriv på japanska: kanji, hiragana, romaji och synonymer godkänns', () => {
+    const w = word(1, { word: '休日', reading: 'きゅうじつ', meaning: 'Ledig dag / helgdag.' })
+    for (const ok of ['休日', 'きゅうじつ', 'kyuujitsu', 'キュウジツ', ' きゅう じつ ']) expect(checkReading(ok, w), ok).toBe(true)
+    expect(checkReading('きゅうじ', w)).toBe(false)
+    // Ett annat ord i ordlistan med samma svenska betydelse är en godkänd synonym …
+    const syn = word(2, { word: '休み', reading: 'やすみ', meaning: 'Ledighet / ledig dag.' })
+    const other = word(3, { word: '平日', reading: 'へいじつ', meaning: 'Vardag.' })
+    expect(checkReading('やすみ', w, [w, syn, other])).toBe(true)
+    expect(checkReading('休み', w, [w, syn, other])).toBe(true)
+    // … men inte ett ord som betyder något annat, och inte utan att ordlistan skickas med.
+    expect(checkReading('へいじつ', w, [w, syn, other])).toBe(false)
+    expect(checkReading('やすみ', w)).toBe(false)
+    // Egna japanska alternativ (sparade via "Jag hade rätt") godkänns också.
+    expect(checkReading('おやすみ', { ...w, altJa: ['お休み'] })).toBe(false)
+    expect(checkReading('お休み', { ...w, altJa: ['お休み'] })).toBe(true)
+    expect(checkReading('オフ', { ...w, altJa: ['オフ'] })).toBe(true)
+    // Ord med mellanslag eller vågstreck i läsningen.
+    expect(checkReading('nantokanaranainokana', word(4, { word: 'なんとかならないのかな', reading: 'なんとか ならない の かな' }))).toBe(true)
+  })
+  it('den svenska frågan avslöjar inte det japanska svaret', () => {
+    expect(meaningPrompt('Grubbla över, oroa sig för, ta åt sig. 気に病むな = Grubbla inte över det / oroa dig inte.')).toBe('Grubbla över, oroa sig för, ta åt sig.')
+    expect(meaningPrompt('Ta hål för piercing (だいぶ開けてる = har tagit ganska många hål).')).toBe('Ta hål för piercing.')
+    expect(meaningPrompt('Polis (myndigheten).')).toBe('Polis (myndigheten).')
+    expect(meaningPrompt('思ったほど〜ない = inte så … som jag trodde.')).not.toMatch(/[\u3040-\u30ff\u3400-\u9fff]/)
   })
   it('rättar läsning oavsett romaji, katakana och mellanslag', () => {
     const w = word(1, { word: '冤罪', reading: 'えんざい' })
