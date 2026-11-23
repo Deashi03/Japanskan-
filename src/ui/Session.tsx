@@ -1,18 +1,28 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { canSpeak, confetti, fx, speak, speakAll, stopSpeaking } from '../fx'
-import { afterIntro, buildExercise, buildQueue, extraQueue, nextFresh, requeue, shuffle, type Exercise, type QItem } from '../session'
+import { afterIntro, buildExercise, buildQueue, extraQueue, nextFresh, overtimeQueue, requeue, shuffle, type Exercise, type QItem } from '../session'
 import { autoRating, exercisesFor, formatDue, knownCard, newCard, pickExercise, schedule, State } from '../srs'
 import { computeStats } from '../stats'
 import { actions, getSnap, uid } from '../store'
 import { syncNow } from '../sync'
-import type { CardData, LogData, Word } from '../types'
-import { Icon, Ja, SpeakButton, WordBreakdown, WordDistinctions, WordExamples, WordHead } from './bits'
+import type { CardData, Example, LogData, Word } from '../types'
+import { FuriText, Icon, Ja, SpeakButton, WordBreakdown, WordDistinctions, WordExamples, WordHead } from './bits'
 import { Cloze, Matching, MultipleChoice, Sentence, Typing, type Result } from './Exercises'
 
 const PRAISE = ['Rätt!', 'Snyggt!', 'Precis!', 'Bra jobbat!', 'いいね！', 'Perfekt!', 'すごい！']
 
 interface Tally { answered: number; correct: number; newWords: number; combo: number; bestCombo: number }
-interface Feedback { correct: boolean; title: string; words: Word[]; nextDue?: number; canOverride?: boolean }
+interface Feedback {
+  correct: boolean
+  title: string
+  words: Word[]
+  nextDue?: number
+  canOverride?: boolean
+  /** Exempelmening som visas och läses upp efter ett rätt svar. */
+  example?: { word: Word; ex: Example }
+  /** Svar som just sparats som godkänd synonym via "Jag hade rätt". */
+  learned?: string
+}
 type IntroPart = 'breakdown' | 'examples' | 'distinctions'
 const introParts = (w: Word): IntroPart[] => [
   ...(w.breakdown.length ? ['breakdown' as const] : []),
@@ -68,6 +78,7 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
   const [extraMode, setExtraMode] = useState(false)
   const [introStep, setIntroStep] = useState(0)
   const [known, setKnown] = useState(0)
+  const [overtime, setOvertime] = useState(false)
   const [toast, setToast] = useState<{ id: number; text: string } | null>(null)
   const undo = useRef<Undo | null>(null)
   const lastAnswer = useRef<{ results: Result[]; ms: number } | null>(null)
@@ -101,7 +112,13 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
   }
 
   const advance = (nextQueue: QItem[]) => {
-    if (elapsedRef.current >= total) return finish()
+    if (elapsedRef.current >= total) {
+      // Tiden är ute. Ord som redan håller på att läras in får sina sista frågor,
+      // så att inget nytt ord lämnas halvfärdigt; allt annat väntar till nästa pass.
+      nextQueue = overtimeQueue(nextQueue)
+      if (!nextQueue.length) return finish()
+      setOvertime(true)
+    }
     setQueue(nextQueue)
     stopSpeaking()
     setFeedback(null)
@@ -124,7 +141,7 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
     if (phase !== 'question') return
     if (turn?.kind === 'skip') return advance(queue.filter((q) => q !== turn.item))
     if (turn === null) {
-      const extra = extraQueue(getSnap())
+      const extra = overtime ? [] : extraQueue(getSnap())
       if (!extra.length) return finish()
       setExtraMode(true)
       advance(extra)
@@ -156,6 +173,7 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
    *  I stället presenteras nästa nya ord, så passet får lika många nya ord som vanligt. */
   async function markKnown() {
     if (turn?.kind !== 'intro') return
+    stopSpeaking()
     const rest = queue.filter((q) => q !== turn.item)
     const replacement = nextFresh(getSnap(), queue)
     await actions.saveCard(turn.word.id, knownCard(Date.now()))
@@ -164,7 +182,7 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
     advance(replacement ? [{ wordId: replacement.id, kind: 'intro' }, ...rest] : rest)
   }
 
-  function onResult(results: Result[], ms: number, base: { queue: QItem[]; tally: Tally } = { queue, tally }) {
+  function onResult(results: Result[], ms: number, base: { queue: QItem[]; tally: Tally } = { queue, tally }, learned?: string) {
     if (turn?.kind !== 'quiz') return
     const { queue, tally } = base
     lastAnswer.current = { results, ms }
@@ -213,7 +231,19 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
       bestCombo: Math.max(tally.bestCombo, combo),
     })
     const words = (allCorrect ? results : wrong).map((r) => snap.words.get(r.wordId)!).filter(Boolean)
+    // Efter ett rätt svar visas och läses en exempelmening upp, så att ordet hörs i sitt
+    // sammanhang. Inte i dra-övningen (flera ord) eller när meningen redan var frågan.
+    const ex = turn.exercise
+    let example: Feedback['example']
+    if (allCorrect && results.length === 1 && ex.type !== 'match' && ex.type !== 'sentence' && ex.word.examples.length) {
+      const pick = ex.type === 'cloze' ? ex.example : ex.word.examples[Math.floor(Math.random() * ex.word.examples.length)]
+      example = { word: ex.word, ex: pick }
+      // Läses upp strax efter ljudeffekten, så att de inte krockar.
+      if (snap.settings.autoSpeak) speakAll([pick.ja], 0, 550)
+    }
     setFeedback({
+      learned,
+      example,
       correct: allCorrect,
       title: allCorrect ? PRAISE[Math.floor(Math.random() * PRAISE.length)] : type === 'match' ? 'Öva lite mer på' : 'Inte riktigt',
       words: type === 'match' && allCorrect ? [] : words,
@@ -242,7 +272,12 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
     if (!u || !last) return
     undo.current = null
     void actions.apply({ cards: u.cards, logs: u.logIds.map((id) => [id, null]) })
-    onResult(last.results.map((r) => ({ ...r, correct: true })), last.ms, { queue: u.queue, tally: u.tally })
+    // Svaret sparas som synonym, så att det godkänns direkt nästa gång.
+    const { wordId, answer } = last.results[0]
+    const word = getSnap().words.get(wordId)
+    const learned = answer && word && !word.synonyms?.some((x) => x.toLowerCase() === answer.toLowerCase()) ? answer : undefined
+    if (learned && word) void actions.saveWords([{ ...word, synonyms: [...(word.synonyms ?? []), learned] }])
+    onResult(last.results.map((r) => ({ ...r, correct: true })), last.ms, { queue: u.queue, tally: u.tally }, learned)
   }
 
   // Enter = fortsätt.
@@ -261,7 +296,9 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
   if (phase === 'summary') return <Summary tally={tally} known={known} elapsed={elapsed} onExit={onExit} />
 
   const left = Math.max(0, total - elapsed)
-  const clock = `${Math.floor(left / 60_000)}:${String(Math.floor((left % 60_000) / 1000)).padStart(2, '0')}`
+  const mmss = (ms: number) => `${Math.floor(ms / 60_000)}:${String(Math.floor((ms % 60_000) / 1000)).padStart(2, '0')}`
+  const clock = mmss(left)
+  const overClock = mmss(Math.max(0, elapsed - total))
 
   return (
     <div className="session">
@@ -274,7 +311,7 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
             {tally.combo > 0 && <i className="shine" key={tally.answered} />}
           </div>
         </div>
-        <span className="clock">{clock}</span>
+        <span className="clock">{overtime ? '+' + overClock : clock}</span>
         <div className="combo-row">
           {tally.combo >= 2 && <span className="combo" key={tally.combo}><Icon name="flame" size={14} /> {tally.combo} i rad</span>}
         </div>
@@ -282,7 +319,8 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
 
       {toast && <div className="toast" key={toast.id} onAnimationEnd={() => setToast(null)}><Icon name="flame" size={28} /> {toast.text}</div>}
       <div className={'session-body' + (phase === 'feedback' && feedback && !feedback.correct ? ' nudge' : '')}>
-        {extraMode && <div className="notice slim">Extra övning – påverkar inte schemat</div>}
+        {extraMode && !overtime && <div className="notice slim">Extra övning – påverkar inte schemat</div>}
+        {overtime && <div className="notice slim">Tiden är ute – vi gör klart de nya orden ({queue.length} {queue.length === 1 ? 'fråga' : 'frågor'} kvar)</div>}
         {turn?.kind === 'intro' && (() => {
           const parts = introParts(turn.word)
           const part = parts[introStep - 1]
@@ -321,11 +359,9 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
 
       {turn?.kind === 'intro' && phase === 'question' && (
         <footer className="session-foot">
-          {introStep === 0 && (
-            <button className="btn ghost known-btn" onClick={() => void markKnown()}>
-              <Icon name="check" size={18} /> Jag kan redan det här ordet
-            </button>
-          )}
+          <button className="btn ghost known-btn" onClick={() => void markKnown()}>
+            <Icon name="check" size={18} /> Jag kan redan det här ordet
+          </button>
           <button className="btn primary big" onClick={() => void introDone()}>{introStep < introParts(turn.word).length ? 'Nästa' : 'Börja öva'}</button>
         </footer>
       )}
@@ -346,6 +382,16 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
               <SpeakButton text={w.word} small />
             </div>
           ))}
+          {feedback.example && (
+            <div className="sheet-example">
+              <div>
+                <FuriText ja={feedback.example.ex.ja} reading={feedback.example.ex.reading} word={feedback.example.word} />
+                <div className="sheet-example-sv">{feedback.example.ex.sv}</div>
+              </div>
+              <SpeakButton text={feedback.example.ex.ja} small />
+            </div>
+          )}
+          {feedback.learned && <div className="sheet-note">”{feedback.learned}” är sparat som godkänt svar.</div>}
           <div className={'row' + (feedback.canOverride ? ' sheet-actions' : '')}>
             <button className="btn ghost" onClick={undoLast} title="Ångra svaret och försök igen">
               <Icon name="undo" size={18} /> Ångra

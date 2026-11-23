@@ -4,6 +4,7 @@ import { countDue } from '../session'
 import { computeStats } from '../stats'
 import { actions, useStore } from '../store'
 import { fx } from '../fx'
+import { applyUpdate, useUpdateReady } from '../update'
 import { Icon } from './bits'
 
 export function Home({ onStart, onImport }: { onStart: (minutes: number) => void; onImport: () => void }) {
@@ -13,9 +14,16 @@ export function Home({ onStart, onImport }: { onStart: (minutes: number) => void
   const counts = useMemo(() => countDue(snap, now), [snap])
   const stats = useMemo(() => computeStats(snap, now), [snap])
   const empty = snap.words.size === 0
+  const updateReady = useUpdateReady()
 
   return (
     <div className="page home">
+      {updateReady && (
+        <div className="update-banner">
+          <span>En ny version av appen finns.</span>
+          <button className="btn small primary" onClick={applyUpdate}>Uppdatera</button>
+        </div>
+      )}
       <header className="home-head">
         <div>
           <h1>こんにちは</h1>

@@ -4,7 +4,7 @@ import { checkReading, checkSwedish, kanaPreview, shuffle, type Exercise } from 
 import { furigana } from '../furigana'
 import { Furi, FuriText, Icon, Ja, Segs, SpeakButton } from './bits'
 
-export interface Result { wordId: string; correct: boolean }
+export interface Result { wordId: string; correct: boolean; answer?: string }
 type Done = (results: Result[], ms: number) => void
 
 function useElapsed() {
@@ -194,7 +194,7 @@ export function Typing({ ex, onDone }: { ex: Extract<Exercise, { type: 'type_sv'
     setState(correct ? 'right' : 'wrong')
     if (correct) burst(input.current)
     input.current?.blur()
-    onDone([{ wordId: ex.word.id, correct }], elapsed())
+    onDone([{ wordId: ex.word.id, correct, answer: giveUp ? undefined : value.trim() }], elapsed())
   }
 
   return (

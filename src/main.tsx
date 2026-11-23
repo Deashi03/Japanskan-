@@ -1,12 +1,12 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { registerSW } from 'virtual:pwa-register'
 import { App } from './ui/App'
 import { loadStore } from './store'
 import { initSync } from './sync'
+import { initUpdates } from './update'
 import './styles.css'
 
-registerSW({ immediate: true })
+initUpdates()
 void navigator.storage?.persist?.()
 
 loadStore().then(() => {

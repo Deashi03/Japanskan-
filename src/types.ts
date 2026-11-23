@@ -76,6 +76,8 @@ export interface Settings {
   autoSpeak: boolean
   /** Ord användaren vill lära sig och ska skicka till en AI. */
   wishlist: string
+  /** Varifrån nya ord hämtas: '' = importordning, '*' = växla mellan listorna, annars en listas namn. */
+  newFrom: string
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -89,6 +91,7 @@ export const DEFAULT_SETTINGS: Settings = {
   showExampleReading: true,
   autoSpeak: true,
   wishlist: '',
+  newFrom: '',
 }
 
 export type Kind = 'word' | 'card' | 'log' | 'settings'

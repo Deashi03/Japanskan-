@@ -280,7 +280,7 @@ export function speak(text: string) {
 /** Läser upp flera texter i följd med en paus emellan. Nästa text startar först när den
  *  förra har lästs klart och pausen har gått; en ny uppläsning eller `stopSpeaking`
  *  avbryter resten. */
-export function speakAll(texts: string[], gapMs = 1500) {
+export function speakAll(texts: string[], gapMs = 1500, delayMs = 0) {
   if (!canSpeak) return
   const run = ++speechRun
   speechSynthesis.cancel()
@@ -300,7 +300,8 @@ export function speakAll(texts: string[], gapMs = 1500) {
     }
     speechSynthesis.speak(u)
   }
-  next(0)
+  if (delayMs > 0) setTimeout(() => next(0), delayMs)
+  else next(0)
 }
 
 export function stopSpeaking() {

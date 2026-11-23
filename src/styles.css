@@ -465,3 +465,41 @@ ruby.furi.sent rt { font-size: 0.56em; }
 .combo-row { flex-basis: 100%; height: 18px; display: flex; justify-content: flex-end; padding-right: 2px; }
 .combo { position: static; }
 .session-body { padding-top: 8px; }
+
+/* Långa ord: texten krymper efter ordets längd (--len sätts av komponenten) och får
+   radbrytas, så att inget hamnar utanför sin ruta eller ovanpå grannen. */
+:root { --w: min(100vw, 620px); --select: #3b82f6; --select-soft: #e3edff; }
+:root[data-theme='dark'] { --select: #6ea8ff; --select-soft: #17263f; }
+.furi-word { overflow-wrap: anywhere; line-break: anywhere; min-width: 0; }
+.prompt-ja { font-size: 1rem; min-width: 0; }
+.prompt-ja .furi-word { font-size: clamp(1.7rem, calc((var(--w) - 124px) / var(--len)), 4.2rem); line-height: 1.5; }
+.prompt-ja .icon-btn { flex: none; }
+.wc-head > div { min-width: 0; }
+.wc-word { font-size: clamp(1.7rem, calc((var(--w) - 150px) / var(--len)), 3.4rem); overflow-wrap: anywhere; line-break: anywhere; }
+.chip { min-width: 0; overflow: hidden; }
+.chip.word { font-size: 1rem; }
+.chip.word .furi-word { font-size: clamp(1rem, calc((var(--w) * 0.4 - 56px) / var(--len)), 1.5rem); line-height: 1.6; }
+.chip-word { font-size: 1rem; max-width: 100%; }
+.chip-word .furi-word { font-size: clamp(0.95rem, calc((var(--w) * 0.6 - 70px) / var(--len)), 1.35rem); }
+.option-ja { font-size: 1rem; min-width: 0; text-align: center; }
+.option-ja .furi-word { font-size: clamp(1.05rem, calc((var(--w) * 0.5 - 64px) / var(--len)), 1.7rem); line-height: 1.6; }
+.options.grid .option { padding: 10px 8px; min-width: 0; }
+.listen-answer { font-size: 1rem; max-width: 100%; }
+.listen-answer .furi-word { font-size: clamp(1.2rem, calc((var(--w) - 60px) / var(--len)), 2rem); }
+.cloze .gap .furi-word, .sheet-word .furi-word { font-size: inherit; }
+.sheet-word > div { min-width: 0; overflow-wrap: anywhere; }
+.match { align-items: stretch; }
+
+/* B. Markerat ord i dra-övningen är blått – rött ser ut som fel svar. */
+.chip.word.selected { border-color: var(--select); box-shadow: 0 4px 0 var(--select); background: var(--select-soft); }
+.chip.word.dragging { border-color: var(--select); }
+.chip.meaning.hover { border-color: var(--select); background: var(--select-soft); }
+
+.sheet-example { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border-radius: 12px; background: rgba(255, 255, 255, 0.45); animation: risein 0.35s 0.3s backwards; font-size: 1.05rem; font-weight: 600; line-height: 1.9; }
+:root[data-theme='dark'] .sheet-example { background: rgba(0, 0, 0, 0.22); }
+.sheet-example > div { min-width: 0; }
+.sheet-example-sv { font-size: 0.9rem; font-weight: 400; line-height: 1.4; opacity: 0.9; }
+.sheet-note { font-size: 0.85rem; opacity: 0.9; animation: risein 0.35s 0.2s backwards; }
+.sheet { max-height: 78dvh; overflow-y: auto; }
+.update-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border-radius: 14px; background: var(--good-soft); color: var(--good-ink); font-weight: 600; animation: risein 0.4s; }
+.select.narrow { width: auto; max-width: 55%; min-height: 40px; }

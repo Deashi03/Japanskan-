@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { formatDue, isProblem, STATUS_LABEL, statusOf } from '../srs'
+import { formatDue, isProblem, knownCard, STATUS_LABEL, statusOf } from '../srs'
 import { byOrder } from '../session'
 import { actions, useStore } from '../store'
 import type { Breakdown, Distinction, Example, Word } from '../types'
@@ -138,6 +138,9 @@ export function WordList({ onImport }: { onImport: () => void }) {
               <button className={'btn' + (open.priority ? '' : ' primary')} onClick={() => void actions.saveWords([{ ...open, priority: open.priority ? undefined : Date.now() }])}>
                 {open.priority ? 'Ta bort från nästa pass' : 'Lär mig härnäst'}
               </button>
+            )}
+            {!open.suspended && (statusOf(openCard) === 'new' || statusOf(openCard) === 'learning') && (
+              <button className="btn" onClick={() => void actions.saveCard(open.id, knownCard(Date.now()))}>Jag kan redan det här ordet</button>
             )}
             <button className="btn" onClick={() => setEditing(true)}>Redigera</button>
             <button className="btn" onClick={() => void actions.saveWords([{ ...open, suspended: !open.suspended }])}>{open.suspended ? 'Återuppta' : 'Pausa'}</button>

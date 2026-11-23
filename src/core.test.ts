@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto'
 import { describe, expect, it } from 'vitest'
 import { parseWordFile, splitDuplicates } from './importer'
 import { autoRating, exercisesFor, isProblem, knownCard, LEARNING_ORDER, newCard, pickExercise, Rating, schedule, State } from './srs'
-import { afterIntro, buildExercise, buildQueue, checkReading, checkSwedish, extraQueue, nextFresh, newQuota, requeue, type QItem } from './session'
+import { afterIntro, buildExercise, buildQueue, checkReading, checkSwedish, extraQueue, freshWords, nextFresh, overtimeQueue, newQuota, requeue, type QItem } from './session'
 import { dayKey, streaks } from './stats'
 import { isDark } from './fx'
 import { furigana } from './furigana'
@@ -152,6 +152,30 @@ describe('session', () => {
     const cards = first.map((id): [string, CardData] => [id, { ...newCard(NOW), state: State.Review, due: NOW + DAY }])
     expect(buildQueue(snapOf(many, cards), NOW).map((i) => i.wordId)).toEqual(['w9', 'w10', 'w11', 'w0', 'w1'])
     expect(nextFresh(snapOf(list), [])?.id).toBe('w7')
+  })
+  it('nya ord kan hämtas i importordning, från en vald lista eller växelvis', () => {
+    const two = [...[0, 1, 2].map((i) => word(i, { list: 'A' })), ...[3, 4, 5].map((i) => word(i, { list: 'B', createdAt: 2 }))]
+    const ids = (newFrom: string, list = two) => freshWords(snapOf(list, [], { ...DEFAULT_SETTINGS, newFrom })).map((w) => w.id)
+    expect(ids('')).toEqual(['w0', 'w1', 'w2', 'w3', 'w4', 'w5'])
+    expect(ids('B')).toEqual(['w3', 'w4', 'w5', 'w0', 'w1', 'w2'])
+    expect(ids('*')).toEqual(['w0', 'w3', 'w1', 'w4', 'w2', 'w5'])
+    // En lista som inte längre finns ger vanlig importordning.
+    expect(ids('Borttagen')).toEqual(ids(''))
+    // Ord man själv valt går alltid först, oavsett inställning.
+    const chosen = two.map((w) => (w.id === 'w2' ? { ...w, priority: 5 } : w))
+    expect(ids('B', chosen).slice(0, 2)).toEqual(['w2', 'w3'])
+    expect(ids('*', chosen)).toEqual(['w2', 'w0', 'w3', 'w1', 'w4', 'w5'])
+  })
+  it('när tiden är ute återstår bara frågorna för ord som håller på att läras in', () => {
+    const q: QItem[] = [
+      { wordId: 'a', kind: 'quiz', learning: true },
+      { wordId: 'b', kind: 'intro' },
+      { wordId: 'c', kind: 'quiz' },
+      { wordId: 'd', kind: 'quiz', extra: true },
+      { wordId: 'e', kind: 'quiz', learning: true },
+    ]
+    expect(overtimeQueue(q).map((i) => i.wordId)).toEqual(['a', 'e'])
+    expect(overtimeQueue([q[1], q[2]])).toEqual([])
   })
   it('pausade ord hoppas över och dagstaket respekteras', () => {
     const snap = snapOf([word(0, { suspended: true }), word(1), word(2)], [['w1', { ...newCard(NOW), state: State.Review, due: NOW + DAY }]], { ...DEFAULT_SETTINGS, dailyNewCap: 1 })

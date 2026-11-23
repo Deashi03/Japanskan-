@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { fx } from '../fx'
 import { actions, db, mergeRemote, useStore } from '../store'
 import { signIn, signOut, signUp, syncNow, useSync } from '../sync'
@@ -30,7 +30,9 @@ function NumberSetting({ label, hint, value, min, max, onChange }: { label: stri
 const THEMES: [ThemeMode, string][] = [['light', 'Ljust'], ['dark', 'Mörkt'], ['system', 'Följ enheten'], ['schedule', 'Tidsstyrt']]
 
 export function SettingsView() {
-  const s = useStore().settings
+  const snap = useStore()
+  const s = snap.settings
+  const lists = useMemo(() => [...new Set([...snap.words.values()].map((w) => w.list))].sort(), [snap.words])
   const set = (patch: Partial<Settings>) => void actions.saveSettings(patch)
   return (
     <div className="page">
@@ -40,6 +42,16 @@ export function SettingsView() {
         <h2>Övning</h2>
         <NumberSetting label="Nya ord per pass" value={s.newPerSession} min={0} max={20} onChange={(v) => set({ newPerSession: v })} />
         <NumberSetting label="Max nya ord per dag" hint={s.dailyNewCap === 0 ? 'Ingen gräns' : undefined} value={s.dailyNewCap} min={0} max={50} onChange={(v) => set({ dailyNewCap: v })} />
+        {lists.length > 1 && (
+          <label className="setting">
+            <span>Nya ord hämtas från<small>Ord du själv valt kommer alltid först</small></span>
+            <select className="select narrow" value={lists.includes(s.newFrom) || s.newFrom === '*' ? s.newFrom : ''} onChange={(e) => set({ newFrom: e.target.value })}>
+              <option value="">Importordning</option>
+              <option value="*">Växla mellan listorna</option>
+              {lists.map((l) => <option key={l} value={l}>{l}</option>)}
+            </select>
+          </label>
+        )}
         <Toggle label="Visa läsning i exempelmeningar" value={s.showExampleReading} onChange={(v) => set({ showExampleReading: v })} />
       </section>
 
