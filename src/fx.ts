@@ -2,14 +2,20 @@ import { getSnap } from './store'
 
 // ---------------------------------------------------------------- Ljud
 
-interface Engine { ctx: AudioContext; out: AudioNode; wet: AudioNode }
+interface Engine { ctx: AudioContext; out: AudioNode; wet: AudioNode; noise: AudioBuffer }
 let engine: Engine | null = null
 
 /** Bygger ljudkedjan: allt går genom en kompressor (jämn nivå) och en liten del genom
  *  ett syntetiskt rumseko, vilket ger ljuden kropp i stället för torra pip. */
 function build(): Engine {
   const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
-  const ctx = new Ctor()
+  // 'interactive' ber om minsta möjliga fördröjning mellan kod och högtalare.
+  let ctx: AudioContext
+  try {
+    ctx = new Ctor({ latencyHint: 'interactive' })
+  } catch {
+    ctx = new Ctor()
+  }
   const comp = ctx.createDynamicsCompressor()
   comp.threshold.value = -18
   comp.ratio.value = 4
@@ -30,7 +36,23 @@ function build(): Engine {
   const wet = ctx.createGain()
   wet.gain.value = 0.22
   wet.connect(reverb).connect(master)
-  return { ctx, out: master, wet }
+  // Ett delat brus som alla brusljud klipper ur, i stället för att skapa nytt varje gång.
+  const noise = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate)
+  const nd = noise.getChannelData(0)
+  for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1
+
+  // Mobiler stänger av ljudutgången efter en stunds tystnad, och nästa ljud kommer då
+  // märkbart för sent – efter animationen det hör till. Ett ohörbart svagt brus håller
+  // utgången vaken så länge appen syns.
+  const keep = ctx.createBufferSource()
+  keep.buffer = noise
+  keep.loop = true
+  const keepGain = ctx.createGain()
+  keepGain.gain.value = 0.0002
+  keep.connect(keepGain).connect(ctx.destination)
+  keep.start()
+
+  return { ctx, out: master, wet, noise }
 }
 
 /** iPhone spelar bara upp ljud som startats av en tryckning, och tystar webbljud när
@@ -50,12 +72,33 @@ function unlock() {
       src.connect(ctx.destination)
       src.start(0)
     }
+    syncLag()
   } catch {
     /* ljud är inte nödvändigt */
   }
 }
 if (typeof window !== 'undefined') {
   for (const ev of ['pointerdown', 'touchend', 'keydown'] as const) window.addEventListener(ev, unlock, { capture: true, passive: true })
+  // Spara batteri när appen inte syns; ljudet väcks igen vid nästa tryckning.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden' && engine?.ctx.state === 'running') void engine.ctx.suspend()
+  })
+}
+
+/** Hur många millisekunder ljudet når örat efter att det startats. Enheten rapporterar
+ *  sin egen fördröjning; därtill kommer det användaren ställt in själv. Animationer som
+ *  hör ihop med ett ljud väntar lika länge, så att de syns och hörs samtidigt. */
+export function lagMs(): number {
+  const settings = getSnap().settings
+  if (!settings.sound) return 0
+  const ctx = engine?.ctx as (AudioContext & { outputLatency?: number }) | undefined
+  const measured = ctx ? ((ctx.baseLatency || 0) + (ctx.outputLatency || 0)) * 1000 : 0
+  return Math.round(Math.min(400, Math.max(0, measured + (settings.audioLag || 0))))
+}
+
+/** Lägger fördröjningen i en CSS-variabel som stilmallen använder för sina animationer. */
+export function syncLag() {
+  if (typeof document !== 'undefined') document.documentElement.style.setProperty('--lag', lagMs() + 'ms')
 }
 
 function audio(): Engine | null {
@@ -94,12 +137,8 @@ function noise(start: number, dur: number, opts: { from: number; to?: number; q?
   const e = audio()
   if (!e) return
   const t = e.ctx.currentTime + start
-  const len = Math.max(1, Math.floor(e.ctx.sampleRate * dur))
-  const buf = e.ctx.createBuffer(1, len, e.ctx.sampleRate)
-  const d = buf.getChannelData(0)
-  for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1
   const src = e.ctx.createBufferSource()
-  src.buffer = buf
+  src.buffer = e.noise
   const f = e.ctx.createBiquadFilter()
   f.type = opts.type ?? 'bandpass'
   f.Q.value = opts.q ?? 1.2
@@ -110,7 +149,7 @@ function noise(start: number, dur: number, opts: { from: number; to?: number; q?
   g.gain.exponentialRampToValueAtTime(opts.gain ?? 0.1, t + Math.min(0.02, dur / 3))
   g.gain.exponentialRampToValueAtTime(0.0001, t + dur)
   src.connect(f).connect(g).connect(e.out)
-  src.start(t)
+  src.start(t, Math.random() * Math.max(0, 1 - dur), dur + 0.05)
 }
 
 /** Marimbaliknande ton: grundton, en snabbt avklingande överton och ett litet anslag. */
@@ -124,6 +163,76 @@ function mallet(freq: number, start: number, dur = 0.5, gain = 0.3) {
 /** Glittrande skimmer ovanpå en ton. */
 function sparkle(freq: number, start: number, count = 4, gain = 0.06) {
   for (let i = 0; i < count; i++) tone(freq * (1 + i * 0.5), start + i * 0.045, 0.28, { gain: gain * (1 - i * 0.15), type: 'triangle' })
+}
+
+// Harpa: en knäppt sträng enligt Karplus–Strong. En kort brusstöt får cirkulera i en
+// fördröjningsslinga som är exakt en svängning lång och mjukas upp för varje varv – det
+// ger den naturliga, avklingande strängklangen. Varje ton räknas ut en gång och sparas.
+const strings = new Map<number, AudioBuffer>()
+
+function stringBuffer(ctx: AudioContext, freq: number): AudioBuffer {
+  const key = Math.round(freq * 10)
+  const cached = strings.get(key)
+  if (cached) return cached
+  const sr = ctx.sampleRate
+  const total = Math.floor(sr * 2.6)
+  const period = Math.max(2, Math.round(sr / freq))
+  const ring = new Float32Array(period)
+  for (let i = 0; i < period; i++) ring[i] = Math.random() * 2 - 1
+  // Mjukare anslag (fingertopp i stället för plektrum): jämna ut bruset några varv.
+  for (let pass = 0; pass < 3; pass++) for (let i = 0; i < period; i++) ring[i] = (ring[i] + ring[(i + 1) % period]) / 2
+  const buffer = ctx.createBuffer(1, total, sr)
+  const out = buffer.getChannelData(0)
+  // Höga strängar tappar energi fortare per sekund, så de får klinga lite längre per varv.
+  const keepEnergy = 0.9935 + 0.0055 * Math.min(1, freq / 1400)
+  let peak = 0
+  for (let i = 0, at = 0; i < total; i++) {
+    const next = (at + 1) % period
+    const v = ring[at]
+    out[i] = v
+    ring[at] = keepEnergy * 0.5 * (v + ring[next])
+    at = next
+    if (Math.abs(v) > peak) peak = Math.abs(v)
+  }
+  const fade = Math.floor(sr * 0.25)
+  for (let i = 0; i < total; i++) out[i] = (out[i] / (peak || 1)) * (i > total - fade ? (total - i) / fade : 1)
+  strings.set(key, buffer)
+  return buffer
+}
+
+function harp(freq: number, start: number, gain = 0.2) {
+  const e = audio()
+  if (!e) return
+  const src = e.ctx.createBufferSource()
+  src.buffer = stringBuffer(e.ctx, freq)
+  const g = e.ctx.createGain()
+  g.gain.value = gain
+  const send = e.ctx.createGain()
+  send.gain.value = 1.4
+  src.connect(g)
+  g.connect(e.out)
+  g.connect(send).connect(e.wet)
+  src.start(e.ctx.currentTime + start)
+}
+
+// Avslutningens toner, i halvtoner från C5.
+const HARP_GLISS = [-24, -22, -20, -17, -15, -12, -10, -8, -5, -3, 0, 2, 4, 7, 9, 12]
+const HARP_FINALE = [-12, -8, -5, 0, 4, 7, 12, 16, 19, 24, 28, 31, 36]
+const CHORDS = [
+  { at: 0.6, bass: -24, harp: [-12, -5, 0, 4, 7, 12], bell: 16, mallets: [0, 4, 7, 12] }, // C
+  { at: 1.2, bass: -19, harp: [-19, -12, -7, -3, 0, 5], bell: 17, mallets: [5, 9, 12] }, // F
+  { at: 1.8, bass: -17, harp: [-17, -10, -5, -1, 2, 7], bell: 19, mallets: [7, 11, 14] }, // G
+]
+/** När slutackordet slår. Animationerna i sammanfattningen är tajmade mot samma tider. */
+export const FINALE_AT = 2.4
+export const HIT_TIMES = [...CHORDS.map((c) => c.at), FINALE_AT]
+
+/** Räknar ut harpans strängar i förväg, lite i taget, så att avslutningen startar direkt. */
+export function prepareHarp() {
+  if (!getSnap().settings.sound || !engine) return
+  const ctx = engine.ctx
+  const notes = [...new Set([...HARP_GLISS, ...HARP_FINALE, ...CHORDS.flatMap((c) => c.harp)])]
+  notes.forEach((semi, i) => setTimeout(() => stringBuffer(ctx, note(semi)), 400 + i * 30))
 }
 
 function vibrate(pattern: number | number[]) {
@@ -237,15 +346,36 @@ export const fx = {
     mallet(note(7), 0.09, 0.5, 0.18)
     mallet(note(12), 0.18, 0.7, 0.18)
   },
-  /** Passet är klart. */
+  /** Passet är klart: ett harpsvep uppåt, tre ackord som stiger (C–F–G) med harpan
+   *  rullande under, och ett stort slutackord med ett sista svep upp i diskanten. */
   complete() {
-    ;[0, 4, 7, 12].forEach((s, i) => mallet(note(s), i * 0.1, 0.6, 0.28))
-    ;[12, 16, 19, 24].forEach((s) => mallet(note(s), 0.46, 1.4, 0.2))
-    tone(note(0) / 2, 0.46, 1.3, { gain: 0.22, type: 'triangle' })
-    sparkle(note(24), 0.6, 6, 0.07)
-    sparkle(note(31), 0.85, 6, 0.05)
-    noise(0.44, 0.5, { from: 2000, to: 7000, gain: 0.04 })
-    vibrate([20, 40, 20, 40, 60])
+    // Uppåtsvepet och den inledande figuren.
+    HARP_GLISS.forEach((semi, i) => harp(note(semi), i * 0.034, 0.1 + i * 0.008))
+    ;[0, 4, 7, 12].forEach((semi, i) => mallet(note(semi), 0.1 + i * 0.1, 0.5, 0.22))
+
+    for (const c of CHORDS) {
+      c.harp.forEach((semi, i) => harp(note(semi), c.at + i * 0.085, 0.2))
+      c.mallets.forEach((semi) => mallet(note(semi), c.at, 0.9, 0.17))
+      bell(note(c.bell), c.at, 1.3, 0.11)
+      bass(note(c.bass), c.at, 0.7, 0.24)
+      noise(c.at - 0.02, 0.22, { from: 3000, to: 7000, gain: 0.025 })
+    }
+
+    // Slutackordet.
+    const t = FINALE_AT
+    ;[0, 4, 7, 12, 16].forEach((semi) => mallet(note(semi), t, 1.8, 0.22))
+    ;[12, 19, 24].forEach((semi) => bell(note(semi), t, 2.2, 0.1))
+    bass(note(-24), t, 1.6, 0.28)
+    bass(note(-36), t, 1.6, 0.18)
+    HARP_FINALE.forEach((semi, i) => harp(note(semi), t + i * 0.045, 0.2))
+    noise(t - 0.25, 0.3, { from: 800, to: 6000, gain: 0.04 })
+    noise(t, 0.9, { from: 6000, to: 9000, gain: 0.035 })
+    sparkle(note(24), t + 0.25, 6, 0.06)
+    sparkle(note(31), t + 0.55, 6, 0.05)
+    sparkle(note(36), t + 0.9, 5, 0.035)
+    // Efterklang: harpan faller mjukt tillbaka.
+    ;[24, 19, 16, 12, 7, 4, 0].forEach((semi, i) => harp(note(semi), t + 1.1 + i * 0.11, 0.09))
+    vibrate([20, 560, 20, 560, 20, 560, 30, 560, 80])
   },
 }
 
@@ -395,6 +525,13 @@ const GOOD = ['#3fbf7c', '#8fe3b6', '#ffd60a', '#ffffff']
 /** Liten gnistkaskad från ett element – används när ett svar är rätt. */
 export function burst(el: Element | null | undefined, count = 14) {
   if (!el) return
+  const lag = lagMs()
+  if (lag > 0) return void setTimeout(() => burstNow(el, count), lag)
+  burstNow(el, count)
+}
+
+function burstNow(el: Element, count: number) {
+  if (!el.isConnected) return
   const r = el.getBoundingClientRect()
   const cx = r.left + r.width / 2
   const cy = r.top + r.height / 2
@@ -438,6 +575,74 @@ export function confetti() {
       g: 0.38,
     }))
   emit([...make(-1), ...make(1)])
+}
+
+/** Fyrverkeri: en rund smäll av gnistor på en plats på skärmen (0–1 i bredd och höjd). */
+export function firework(x: number, y: number, palette: string[], count = 46, power = 1) {
+  const cx = x * innerWidth
+  const cy = y * innerHeight
+  emit(
+    Array.from({ length: count }, (_, i): Particle => {
+      const a = (i / count) * Math.PI * 2 + Math.random() * 0.25
+      const v = (3.5 + Math.random() * 5.5) * power
+      return {
+        x: cx,
+        y: cy,
+        vx: Math.cos(a) * v,
+        vy: Math.sin(a) * v,
+        s: 6 + Math.random() * 8,
+        r: Math.random() * Math.PI,
+        vr: (Math.random() - 0.5) * 0.3,
+        color: palette[i % palette.length],
+        life: 900 + Math.random() * 500,
+        age: 0,
+        shape: i % 2 ? 2 : 1,
+        g: 0.09,
+      }
+    }),
+  )
+}
+
+/** Långsamt fallande konfetti från överkanten. */
+function rain(count = 70) {
+  emit(
+    Array.from({ length: count }, (): Particle => ({
+      x: Math.random() * innerWidth,
+      y: -20 - Math.random() * innerHeight * 0.5,
+      vx: (Math.random() - 0.5) * 2,
+      vy: 2 + Math.random() * 3,
+      s: 6 + Math.random() * 7,
+      r: Math.random() * Math.PI,
+      vr: (Math.random() - 0.5) * 0.4,
+      color: COLORS[Math.floor(Math.random() * COLORS.length)],
+      life: 3200 + Math.random() * 1400,
+      age: 0,
+      shape: Math.random() < 0.7 ? 0 : 1,
+      g: 0.03,
+    })),
+  )
+}
+
+/** Firandet när ett pass är klart: musiken, och fyrverkerier som smäller på ackorden. */
+export function celebrate() {
+  fx.complete()
+  const lag = lagMs()
+  const at = (seconds: number, run: () => void) => setTimeout(run, seconds * 1000 + lag)
+  const GOLD = ['#ffd60a', '#ffe98a', '#ffffff', '#f5a524']
+  const ROSE = ['#f0595e', '#ffb1b3', '#ffffff', '#ffd60a']
+  const MINT = ['#3fbf7c', '#8fe3b6', '#ffffff', '#6ea8ff']
+  at(HIT_TIMES[0], () => firework(0.5, 0.3, GOLD))
+  at(HIT_TIMES[1], () => firework(0.2, 0.24, ROSE))
+  at(HIT_TIMES[2], () => firework(0.8, 0.24, MINT))
+  at(FINALE_AT, () => {
+    firework(0.5, 0.3, [...GOLD, ...ROSE, ...MINT], 90, 1.5)
+    confetti()
+  })
+  at(FINALE_AT + 0.35, () => rain())
+  at(FINALE_AT + 0.6, () => {
+    firework(0.15, 0.5, GOLD, 30, 0.8)
+    firework(0.85, 0.5, GOLD, 30, 0.8)
+  })
 }
 
 // ---------------------------------------------------------------- Tema

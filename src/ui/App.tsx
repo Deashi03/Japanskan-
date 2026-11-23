@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { isDark } from '../fx'
+import { isDark, syncLag } from '../fx'
 import { useStore } from '../store'
 import { Icon } from './bits'
 import { Home } from './Home'
@@ -38,6 +38,8 @@ function useTheme() {
 
 export function App() {
   useTheme()
+  const { sound, audioLag } = useStore().settings
+  useEffect(syncLag, [sound, audioLag])
   const [tab, setTab] = useState<Tab>('home')
   const [minutes, setMinutes] = useState<number | null>(null)
   const [importing, setImporting] = useState(false)
