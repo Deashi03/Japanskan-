@@ -15,6 +15,36 @@ function useElapsed() {
 
 const optionStyle = (i: number) => ({ '--i': i }) as React.CSSProperties
 
+/** Läser upp texten och släpper fram svarsalternativen först en sekund efter att
+ *  uppläsningen är klar – så att man lyssnar i stället för att läsa svaren. */
+function useListenGate(text: string, active: boolean): [boolean, () => void] {
+  const [ready, setReady] = useState(!active)
+  useEffect(() => {
+    if (!active) return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let alive = true
+    speak(text, () => {
+      timer = setTimeout(() => alive && setReady(true), 1000)
+    })
+    return () => {
+      alive = false
+      clearTimeout(timer)
+    }
+  }, [text, active])
+  // "Spela upp igen" läser bara upp; alternativen som redan syns ligger kvar.
+  const replay = () => speak(text, () => setTimeout(() => setReady(true), 1000))
+  return [ready, replay]
+}
+
+function Waiting() {
+  return (
+    <div className="listen-wait" aria-live="polite">
+      <span /><span /><span />
+      <p className="muted small">Lyssna – svaren visas strax</p>
+    </div>
+  )
+}
+
 /** Flerval i tre varianter: se ordet, se betydelsen eller bara höra ordet. */
 export function MultipleChoice({ ex, onDone }: { ex: Extract<Exercise, { type: 'mc_ja_sv' | 'mc_sv_ja' | 'listen' }>; onDone: Done }) {
   const [picked, setPicked] = useState<string | null>(null)
@@ -22,10 +52,7 @@ export function MultipleChoice({ ex, onDone }: { ex: Extract<Exercise, { type: '
   const elapsed = useElapsed()
   const listen = ex.type === 'listen'
   const toSwedish = ex.type !== 'mc_sv_ja'
-
-  useEffect(() => {
-    if (listen) speak(ex.word.word)
-  }, [listen, ex])
+  const [ready, replay] = useListenGate(ex.word.word, listen)
 
   function pick(id: string, el: Element | null) {
     if (picked) return
@@ -39,7 +66,7 @@ export function MultipleChoice({ ex, onDone }: { ex: Extract<Exercise, { type: '
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const i = Number(e.key) - 1
-      if (i >= 0 && i < ex.options.length) pick(ex.options[i].id, document.querySelectorAll('.option')[i])
+      if (ready && i >= 0 && i < ex.options.length) pick(ex.options[i].id, document.querySelectorAll('.option')[i])
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -50,7 +77,7 @@ export function MultipleChoice({ ex, onDone }: { ex: Extract<Exercise, { type: '
       <p className="ex-label">{listen ? 'Lyssna – vad betyder ordet?' : toSwedish ? 'Vad betyder ordet?' : 'Vilket ord betyder detta?'}</p>
       {listen ? (
         <div className="prompt-listen">
-          <button type="button" className="listen-btn" onClick={() => speak(ex.word.word)} aria-label="Spela upp igen">
+          <button type="button" className="listen-btn" onClick={replay} aria-label="Spela upp igen">
             <Icon name="sound" size={44} />
           </button>
           <div className="listen-answer">{revealed && <span className="pop-in"><Furi word={ex.word.word} reading={ex.word.reading} /></span>}</div>
@@ -63,7 +90,7 @@ export function MultipleChoice({ ex, onDone }: { ex: Extract<Exercise, { type: '
       ) : (
         <div className="prompt-sv">{meaningPrompt(ex.word.meaning)}</div>
       )}
-      <div className={'options' + (toSwedish ? '' : ' grid')}>
+      {!ready ? <Waiting /> : <div className={'options' + (toSwedish ? '' : ' grid')}>
         {ex.options.map((o, i) => {
           const state = !picked ? '' : o.id === ex.word.id ? ' right' : o.id === picked ? ' wrong' : ' dim'
           return (
@@ -73,25 +100,25 @@ export function MultipleChoice({ ex, onDone }: { ex: Extract<Exercise, { type: '
             </button>
           )
         })}
-      </div>
+      </div>}
     </div>
   )
 }
 
 /** Meningsförståelse: hör en exempelmening och välj rätt översättning. */
-export function Sentence({ ex, onDone }: { ex: Extract<Exercise, { type: 'sentence' }>; onDone: Done }) {
+/** Meningsförståelse: hör en mening och välj rätt översättning. Används både för
+ *  exempelmeningar och för meningar med en böjd form av ordet. */
+export function Sentence({ ex, onDone }: { ex: Extract<Exercise, { type: 'sentence' | 'form' }>; onDone: Done }) {
+  const example = ex.type === 'form' ? ex.form.ex : ex.example
   const [picked, setPicked] = useState<string | null>(null)
   const [showText, setShowText] = useState(false)
+  const [ready, replay] = useListenGate(example.ja, true)
   const elapsed = useElapsed()
-
-  useEffect(() => {
-    speak(ex.example.ja)
-  }, [ex])
 
   function pick(choice: string, el: Element | null) {
     if (picked) return
     setPicked(choice)
-    const correct = choice === ex.example.sv
+    const correct = choice === example.sv
     if (correct) burst(el)
     setShowText(true)
     onDone([{ wordId: ex.word.id, correct }], elapsed())
@@ -99,30 +126,37 @@ export function Sentence({ ex, onDone }: { ex: Extract<Exercise, { type: 'senten
 
   return (
     <div className="exercise">
-      <p className="ex-label">Lyssna – vad betyder meningen?</p>
+      <p className="ex-label">{ex.type === 'form' ? 'Lyssna – ordet är böjt. Vad betyder meningen?' : 'Lyssna – vad betyder meningen?'}</p>
       <div className="prompt-listen">
-        <button type="button" className="listen-btn" onClick={() => speak(ex.example.ja)} aria-label="Spela upp igen">
+        <button type="button" className="listen-btn" onClick={replay} aria-label="Spela upp igen">
           <Icon name="sound" size={44} />
         </button>
         {showText ? (
           <div className="sentence-text pop-in">
-            <FuriText ja={ex.example.ja} reading={ex.example.reading} word={ex.word} />
+            <FuriText ja={example.ja} reading={example.reading} word={ex.word} />
+            {ex.type === 'form' && picked && (
+              <div className="form-label">
+                <Furi word={ex.form.ja} reading={ex.form.reading} /> = {ex.form.label} av <Furi word={ex.word.word} reading={ex.word.reading} />
+              </div>
+            )}
           </div>
         ) : (
           <button type="button" className="btn ghost small" onClick={() => setShowText(true)}>Visa texten</button>
         )}
       </div>
-      <div className="options">
-        {ex.choices.map((c, i) => {
-          const state = !picked ? '' : c === ex.example.sv ? ' right' : c === picked ? ' wrong' : ' dim'
-          return (
-            <button key={c} style={optionStyle(i)} className={'option' + state} disabled={!!picked} onClick={(e) => pick(c, e.currentTarget)}>
-              <kbd>{i + 1}</kbd>
-              <span>{c}</span>
-            </button>
-          )
-        })}
-      </div>
+      {!ready ? <Waiting /> : (
+        <div className="options">
+          {ex.choices.map((c, i) => {
+            const state = !picked ? '' : c === example.sv ? ' right' : c === picked ? ' wrong' : ' dim'
+            return (
+              <button key={c} style={optionStyle(i)} className={'option' + state} disabled={!!picked} onClick={(e) => pick(c, e.currentTarget)}>
+                <kbd>{i + 1}</kbd>
+                <span>{c}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
@@ -175,6 +209,10 @@ export function Cloze({ ex, onDone }: { ex: Extract<Exercise, { type: 'cloze' }>
     </div>
   )
 }
+
+/** Knapparna under ett textfält tar inte fokus från fältet. Annars fälls tangentbordet ner
+ *  mitt i trycket, knappen flyttar sig och trycket hamnar fel. */
+const keepFocus = (e: React.PointerEvent) => e.preventDefault()
 
 /** Skriv svaret: antingen den svenska betydelsen, eller det japanska ordet (i hiragana/romaji). */
 export function Typing({ ex, onDone }: { ex: Extract<Exercise, { type: 'type_sv' | 'type_from_sv' }>; onDone: Done }) {
@@ -239,10 +277,11 @@ export function Typing({ ex, onDone }: { ex: Extract<Exercise, { type: 'type_sv'
       {hint !== null && <div className="hint pop-in"><span>Ledtråd</span> <span lang={toJapanese ? 'ja' : 'sv'} className={toJapanese ? 'ja' : ''}>{hint}</span></div>}
       {!state && (
         <div className="row">
-          <button type="button" className="btn ghost" onClick={() => submit(true)}>Vet inte</button>
+          <button type="button" className="btn ghost" onPointerDown={keepFocus} onClick={() => submit(true)}>Vet inte</button>
           {hint === null && (
             <button
               type="button"
+              onPointerDown={keepFocus}
               className="btn ghost"
               onClick={() => {
                 setHint(hintFor(ex.word, toJapanese))
@@ -252,7 +291,7 @@ export function Typing({ ex, onDone }: { ex: Extract<Exercise, { type: 'type_sv'
               Ledtråd
             </button>
           )}
-          <button type="submit" className="btn primary grow" disabled={!value.trim()}>Kontrollera</button>
+          <button type="submit" className="btn primary grow" onPointerDown={keepFocus} disabled={!value.trim()}>Kontrollera</button>
         </div>
       )}
     </form>

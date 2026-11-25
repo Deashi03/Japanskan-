@@ -32,6 +32,16 @@ export function StatsView() {
   return (
     <div className="page">
       <header className="page-head"><h1>Statistik</h1></header>
+      <div className="today-card">
+        <div>
+          <strong>{s.todayLeft}</strong>
+          <span>{s.todayLeft === 1 ? 'ord kvar att repetera i dag' : 'ord kvar att repetera i dag'}</span>
+        </div>
+        <div className="today-meter" role="img" aria-label={`${s.reviewedToday} av ${s.reviewedToday + s.todayLeft} repeterade i dag`}>
+          <div style={{ width: `${s.reviewedToday + s.todayLeft ? (s.reviewedToday / (s.reviewedToday + s.todayLeft)) * 100 : 100}%` }} />
+        </div>
+        <span className="muted small">{s.reviewedToday} repeterade hittills i dag{s.todayLeft === 0 ? ' – allt klart!' : ''}</span>
+      </div>
       <div className="tiles">
         <div className="tile hero"><strong>{s.learned}</strong><span>lärda ord av {s.words}</span></div>
         <div className="tile"><strong className="with-icon"><Icon name="flame" size={22} />{s.current}</strong><span>dagar i rad</span></div>
