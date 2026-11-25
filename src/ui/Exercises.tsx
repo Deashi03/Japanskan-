@@ -169,8 +169,8 @@ export function Cloze({ ex, onDone }: { ex: Extract<Exercise, { type: 'cloze' }>
   // sidan luckan råkar få målordets läsning.
   const [before, after] = useMemo(() => {
     const at = ex.before.length
-    const end = at + ex.word.word.length
-    const segs = furigana(ex.example.ja, ex.example.reading, { at, len: ex.word.word.length, reading: ex.word.reading })
+    const end = at + ex.gap.length
+    const segs = furigana(ex.example.ja, ex.example.reading, { at, len: ex.gap.length, reading: ex.gapReading })
     if (!segs) return [null, null]
     return [segs.filter((s) => s.start < at), segs.filter((s) => s.start >= end)]
   }, [ex])
@@ -185,15 +185,20 @@ export function Cloze({ ex, onDone }: { ex: Extract<Exercise, { type: 'cloze' }>
 
   return (
     <div className="exercise">
-      <p className="ex-label">Vilket ord saknas?</p>
+      <p className="ex-label">{ex.form ? 'Vilket ord saknas? Det står böjt i meningen – välj grundformen.' : 'Vilket ord saknas?'}</p>
       <div className="cloze">
         <div className="cloze-ja">
           {before ? <Segs segs={before} /> : <Ja>{ex.before}</Ja>}
-          <span className={'gap' + (picked ? ' filled' : '')}>{picked ? <Furi word={ex.word.word} reading={ex.word.reading} /> : '？'}</span>
+          <span className={'gap' + (picked ? ' filled' : '')}>{picked ? <Furi word={ex.gap} reading={ex.gapReading} /> : '？'}</span>
           {after ? <Segs segs={after} /> : <Ja>{ex.after}</Ja>}
           {picked && <SpeakButton text={ex.example.ja} small />}
         </div>
         <div className="cloze-sv">{ex.example.sv}</div>
+        {picked && ex.form && (
+          <div className="form-label pop-in">
+            <Furi word={ex.gap} reading={ex.gapReading} /> är {ex.form.label} av <Furi word={ex.word.word} reading={ex.word.reading} />
+          </div>
+        )}
       </div>
       <div className="options grid">
         {ex.options.map((o, i) => {

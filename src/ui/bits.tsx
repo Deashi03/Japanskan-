@@ -1,6 +1,7 @@
 import { useMemo, type CSSProperties, type ReactNode } from 'react'
 import { furigana, setReadingDict, type Seg } from '../furigana'
 import { canSpeak, speak } from '../fx'
+import { shortMeaning } from '../session'
 import { useStore } from '../store'
 import type { Word } from '../types'
 
@@ -241,6 +242,26 @@ export function Segs({ segs }: { segs: Seg[] }) {
   )
 }
 
+/** Ord man har blandat ihop med det här ordet i skrivövningar, med betydelse så att
+ *  skillnaden syns direkt. */
+export function WordConfusions({ word }: { word: Word }) {
+  const snap = useStore()
+  const others = (word.confusable ?? []).map((id) => snap.words.get(id)).filter((w): w is Word => !!w)
+  if (!others.length) return null
+  return (
+    <section>
+      <h4>Du har blandat ihop det med</h4>
+      <ul className="wc-list">
+        {others.map((o) => (
+          <li key={o.id}>
+            <Furi word={o.word} reading={o.reading} /> <span>= {shortMeaning(o.meaning)}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
 /** Hela ordkortet: ord, läsning, betydelse, nedbrytning, exempel och skillnader. */
 export function WordCard({ word }: { word: Word }) {
   return (
@@ -250,6 +271,7 @@ export function WordCard({ word }: { word: Word }) {
       {word.breakdown.length > 0 && <WordBreakdown word={word} />}
       {word.examples.length > 0 && <WordExamples word={word} />}
       {word.distinctions.length > 0 && <WordDistinctions word={word} />}
+      <WordConfusions word={word} />
     </div>
   )
 }

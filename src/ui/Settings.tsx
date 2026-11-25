@@ -32,7 +32,7 @@ const THEMES: [ThemeMode, string][] = [['light', 'Ljust'], ['dark', 'Mörkt'], [
 export function SettingsView() {
   const snap = useStore()
   const s = snap.settings
-  const lists = useMemo(() => [...new Set([...snap.words.values()].map((w) => w.list))].sort(), [snap.words])
+  const lists = useMemo(() => [...new Set([...snap.words.values()].map((w) => w.list))].sort(), [snap])
   const set = (patch: Partial<Settings>) => void actions.saveSettings(patch)
   return (
     <div className="page">
@@ -116,7 +116,7 @@ function Account() {
         <>
           <p>Inloggad som <strong>{sync.email}</strong></p>
           <p className="muted small">
-            {sync.status === 'syncing' ? 'Synkar…' : sync.status === 'error' ? `Synken misslyckades: ${sync.error}` : sync.lastSync ? `Senast synkad ${new Date(sync.lastSync).toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' })}` : 'Inte synkad än'}
+            {sync.status === 'syncing' ? `Synkar…${sync.progress ? ' ' + sync.progress : ''}` : sync.status === 'error' ? `Synken misslyckades: ${sync.error}` : sync.lastSync ? `Senast synkad ${new Date(sync.lastSync).toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' })}` : 'Inte synkad än'}
           </p>
           <div className="row wrap">
             <button className="btn" onClick={() => void syncNow()} disabled={sync.status === 'syncing'}>Synka nu</button>

@@ -41,6 +41,8 @@ export function WordList({ onImport }: { onImport: () => void }) {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<Filter>('all')
   const [list, setList] = useState('')
+  const [category, setCategory] = useState('')
+  const [posFilter, setPosFilter] = useState('')
   const [openId, setOpenId] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
   const [wishOpen, setWishOpen] = useState(false)
@@ -64,7 +66,7 @@ export function WordList({ onImport }: { onImport: () => void }) {
   // Långa listor ritas en bit i taget; nästa bit läggs till när man scrollar ner.
   const [limit, setLimit] = useState(PAGE)
   const sentinel = useRef<HTMLLIElement>(null)
-  useEffect(() => setLimit(PAGE), [query, filter, list])
+  useEffect(() => setLimit(PAGE), [query, filter, list, category, posFilter])
   useEffect(() => {
     const el = sentinel.current
     if (!el) return
@@ -91,12 +93,25 @@ export function WordList({ onImport }: { onImport: () => void }) {
   const wishes = wishCount(snap.settings.wishlist)
   const now = Date.now()
 
-  const lists = useMemo(() => [...new Set([...snap.words.values()].map((w) => w.list))].sort(), [snap.words])
+  // Ämnen och ordklasser som finns bland orden, med antal – bara de visas i filtren.
+  const { categories, poses } = useMemo(() => {
+    const c = new Map<string, number>()
+    const p = new Map<string, number>()
+    for (const w of snap.words.values()) {
+      for (const x of w.categories ?? []) c.set(x, (c.get(x) ?? 0) + 1)
+      for (const x of w.pos ?? []) p.set(x, (p.get(x) ?? 0) + 1)
+    }
+    const sort = (m: Map<string, number>) => [...m.entries()].sort((a, b) => a[0].localeCompare(b[0], 'sv'))
+    return { categories: sort(c), poses: sort(p) }
+  }, [snap])
+  const lists = useMemo(() => [...new Set([...snap.words.values()].map((w) => w.list))].sort(), [snap])
   const words = useMemo(() => {
     const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
     return [...snap.words.values()]
       .filter((w) => {
         if (list && w.list !== list) return false
+        if (category && !w.categories?.includes(category)) return false
+        if (posFilter && !w.pos?.includes(posFilter)) return false
         if (terms.length && !matches(w, terms)) return false
         const c = snap.cards.get(w.id)
         const s = statusOf(c)
@@ -109,7 +124,7 @@ export function WordList({ onImport }: { onImport: () => void }) {
         return true
       })
       .sort(filter === 'chosen' ? byOrder : (a, b) => a.createdAt - b.createdAt || a.order - b.order)
-  }, [snap, query, filter, list])
+  }, [snap, query, filter, list, category, posFilter])
 
   // Bara ord som fortfarande visas räknas som markerade; varje åtgärd gäller de ord den passar för.
   const picked = words.filter((w) => selected.has(w.id))
@@ -142,6 +157,22 @@ export function WordList({ onImport }: { onImport: () => void }) {
           <option value="">Alla listor</option>
           {lists.map((l) => <option key={l}>{l}</option>)}
         </select>
+      )}
+      {(categories.length > 0 || poses.length > 0) && (
+        <div className="filters">
+          {categories.length > 0 && (
+            <select className="select" value={category} onChange={(e) => setCategory(e.target.value)} aria-label="Ämne">
+              <option value="">Alla ämnen</option>
+              {categories.map(([c, n]) => <option key={c} value={c}>{c} ({n})</option>)}
+            </select>
+          )}
+          {poses.length > 0 && (
+            <select className="select" value={posFilter} onChange={(e) => setPosFilter(e.target.value)} aria-label="Ordklass">
+              <option value="">Alla ordklasser</option>
+              {poses.map(([p, n]) => <option key={p} value={p}>{POS_LABEL[p] ?? p} ({n})</option>)}
+            </select>
+          )}
+        </div>
       )}
       {list && (
         <div className="row wrap">

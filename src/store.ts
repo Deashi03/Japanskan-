@@ -40,6 +40,14 @@ let loaded = false
 
 const extraCache = new Map<string, WordExtra>()
 const extraListeners = new Set<() => void>()
+const EXTRA_CACHE_MAX = 300
+
+/** Cachen hålls liten (de äldsta släpps först), hur mycket innehåll som än importeras eller
+ *  synkas. Ett ord som saknas i cachen läses in igen från databasen när det behövs. */
+function trimExtras() {
+  if (extraCache.size <= EXTRA_CACHE_MAX) return
+  for (const key of [...extraCache.keys()].slice(0, extraCache.size - EXTRA_CACHE_MAX)) extraCache.delete(key)
+}
 let extraVersion = 0
 
 const wid = (id: string) => 'w:' + id
@@ -63,7 +71,10 @@ function applyToSnap(next: Snapshot, row: Row) {
   } else if (row.kind === 'extra') {
     // Extrainnehållet hålls utanför ögonblicksbilden; bara cachen uppdateras.
     if (row.deleted) extraCache.delete(key)
-    else extraCache.set(key, row.data as WordExtra)
+    else {
+      extraCache.set(key, row.data as WordExtra)
+      trimExtras()
+    }
     extraVersion++
   }
   else if (row.kind === 'settings' && !row.deleted) next.settings = { ...DEFAULT_SETTINGS, ...(row.data as Settings) }
@@ -199,8 +210,7 @@ export async function loadExtras(wordIds: string[]) {
   if (!missing.length) return
   const rows = await db.rows.bulkGet(missing.map(xid))
   rows.forEach((row) => row && !row.deleted && extraCache.set(row.id.slice(2), row.data as WordExtra))
-  // Cachen hålls liten: de äldsta inläsningarna släpps när den växer.
-  if (extraCache.size > 400) for (const key of [...extraCache.keys()].slice(0, extraCache.size - 400)) extraCache.delete(key)
+  trimExtras()
   extraVersion++
   extraListeners.forEach((l) => l())
 }

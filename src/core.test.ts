@@ -3,9 +3,10 @@ import { describe, expect, it } from 'vitest'
 import { parseWordFile, splitDuplicates } from './importer'
 import { autoRating, clearRetry, dueRetries, exercisesFor, isDue, isProblem, knownCard, LEARNING_ORDER, missingSkills, REVIEW_ORDER, newCard, pickExercise, Rating, schedule, State, statusOf, withRetry } from './srs'
 import { dayIndex, dayStart, endOfDay } from './days'
-import { afterIntro, buildExercise, buildQueue, checkReading, checkSwedish, extraQueue, freshWords, hintFor, meaningPrompt, nextFresh, overtimeQueue, remainingReviews, newQuota, requeue, type QItem } from './session'
+import { afterIntro, buildExercise, buildQueue, checkReading, checkSwedish, extraQueue, findConfusion, freshWords, hintFor, meaningPrompt, nextFresh, overtimeQueue, pickExample, remainingReviews, shortMeaning, newQuota, requeue, type QItem } from './session'
 import { dayKey, streaks } from './stats'
 import { isDark } from './fx'
+import { MAX_SEMI, milestoneLevel, planCorrect, planLength, planMilestone, signature } from './streak'
 import { furigana } from './furigana'
 import type { Snapshot } from './store'
 import { DEFAULT_SETTINGS, type CardData, type Word } from './types'
@@ -471,5 +472,143 @@ describe('streak och tema', () => {
     expect(isDark('schedule', '20:00', '07:00', at(3))).toBe(true)
     expect(isDark('schedule', '20:00', '07:00', at(12))).toBe(false)
     expect(isDark('dark', '', '')).toBe(true)
+  })
+})
+
+describe('ljud för rätt svar i rad', () => {
+  const melody = (n: number) => planCorrect(n).filter((p) => ['mallet', 'kalimba', 'bell', 'harp'].includes(p.voice) && p.gain >= 0.25)
+  const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length
+
+  it('tonläget klättrar inte med sviten och ligger i mellanregistret', () => {
+    for (let n = 1; n <= 200; n++) {
+      if (milestoneLevel(n)) continue
+      for (const p of planCorrect(n)) {
+        expect(p.semi).toBeLessThanOrEqual(MAX_SEMI)
+        expect(p.semi).toBeGreaterThanOrEqual(-34)
+      }
+    }
+    const avg = (from: number, to: number) => mean(Array.from({ length: to - from + 1 }, (_, i) => i + from).filter((n) => !milestoneLevel(n)).flatMap((n) => melody(n).map((p) => p.semi)))
+    // Tiotal efter tiotal ligger melodin kvar på ungefär samma nivå.
+    expect(Math.abs(avg(1, 19) - avg(101, 119))).toBeLessThan(1.5)
+    expect(Math.abs(avg(1, 19) - avg(41, 59))).toBeLessThan(1.5)
+  })
+  it('två rätt i rad låter aldrig likadant och instrumenten växlar', () => {
+    for (let n = 1; n < 120; n++) expect(signature(planCorrect(n))).not.toBe(signature(planCorrect(n + 1)))
+    const voices = new Set(Array.from({ length: 16 }, (_, i) => i + 1).filter((n) => !milestoneLevel(n)).map((n) => melody(n)[0].voice))
+    expect(voices.size).toBe(4)
+    // Över tjugo svar i rad används många olika ljud, inte några få som upprepas.
+    expect(new Set(Array.from({ length: 24 }, (_, i) => signature(planCorrect(i + 1))).filter(Boolean)).size).toBeGreaterThanOrEqual(23)
+  })
+  it('ackorden följer en följd i stället för att stå still', () => {
+    const roots = Array.from({ length: 8 }, (_, i) => melody(i + 1).map((p) => p.semi).sort((a, b) => a - b)[0])
+    expect(new Set(roots).size).toBeGreaterThanOrEqual(3)
+  })
+  it('10, 20, 30 … är milstolpar som växer, med lager som tillkommer', () => {
+    expect(milestoneLevel(9)).toBe(0)
+    expect([10, 20, 30, 100].map(milestoneLevel)).toEqual([1, 2, 3, 10])
+    const lens = [1, 2, 3, 4, 5, 6].map((l) => planCorrect(l * 10).length)
+    for (let i = 1; i < lens.length; i++) expect(lens[i]).toBeGreaterThanOrEqual(lens[i - 1])
+    expect(lens[2]).toBeGreaterThan(lens[0] + 5)
+    const voicesAt = (l: number) => new Set(planCorrect(l * 10).map((p) => p.voice))
+    expect(voicesAt(1).has('harp')).toBe(false)
+    expect(voicesAt(2).has('harp')).toBe(true)
+    expect(voicesAt(3).has('timpani')).toBe(true)
+    expect(voicesAt(4).has('pad')).toBe(true)
+    // Varje milstolpe låter olika, och fanfaren blir längre.
+    const sigs = [1, 2, 3, 4, 5, 6, 7, 8].map((l) => signature(planMilestone(l)))
+    expect(new Set(sigs).size).toBe(8)
+    expect(planLength(planMilestone(5))).toBeGreaterThan(planLength(planMilestone(1)))
+    // Ett vanligt rätt svar är kort; en milstolpe tar plats.
+    expect(planLength(planCorrect(7))).toBeLessThan(1.3)
+  })
+  it('var femte svar har en löpning, men 10 är en milstolpe i stället', () => {
+    const run = (n: number) => planCorrect(n).filter((p) => p.voice === 'mallet').length
+    expect(run(5)).toBeGreaterThan(run(4) + 3)
+    expect(planCorrect(10).some((p) => p.voice === 'horn')).toBe(true)
+    expect(planCorrect(5).some((p) => p.voice === 'horn')).toBe(false)
+  })
+})
+
+
+describe('exempelval och förväxlingar', () => {
+  it('exempelmeningens svårighet följer hur väl ordet sitter', () => {
+    const bank = [1, 2, 3].flatMap((level) => [1, 2, 3, 4].map((i) => ({ level: level as 1 | 2 | 3, id: `${level}${i}` })))
+    let seed = 7
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647)
+    const share = (stability: number, level: number) => Array.from({ length: 600 }, () => pickExample(bank, stability, rnd)!).filter((e) => e.level === level).length / 600
+    expect(share(1, 1)).toBeGreaterThan(0.6)
+    expect(share(10, 2)).toBeGreaterThan(0.6)
+    expect(share(60, 3)).toBeGreaterThan(0.6)
+    // Alla nivåer kan fortfarande komma, men de som inte passar är sällsynta.
+    expect(share(60, 1)).toBeGreaterThan(0)
+    expect(share(60, 1)).toBeLessThan(0.1)
+    expect(pickExample([], 5)).toBeUndefined()
+    // Meningar utan nivå räknas som enkla.
+    const plain: { level?: 1 | 2 | 3 } = {}
+    expect(pickExample([plain], 50)).toBe(plain)
+  })
+
+  const A = word(1, { word: '休日', reading: 'きゅうじつ', meaning: 'Ledig dag / helgdag.', synonyms: ['helg'] })
+  const B = word(2, { word: '平日', reading: 'へいじつ', meaning: 'Vardag.' })
+  const C = word(3, { word: '祝日', reading: 'しゅくじつ', meaning: 'Helgdag (nationell).' })
+  const all = [A, B, C]
+
+  it('hittar förväxlingar i japanska svar (kanji, hiragana och romaji)', () => {
+    expect(findConfusion('平日', A, all, true)?.id).toBe(B.id)
+    expect(findConfusion('へいじつ', A, all, true)?.id).toBe(B.id)
+    expect(findConfusion('heijitsu', A, all, true)?.id).toBe(B.id)
+    expect(findConfusion('しゅくじつ', A, all, true)?.id).toBe(C.id)
+    // Ett svar som inte är något ord i listan, eller är ordet självt, är ingen förväxling.
+    expect(findConfusion('ふつか', A, all, true)).toBeUndefined()
+    expect(findConfusion('休日', A, all, true)).toBeUndefined()
+    expect(findConfusion('', A, all, true)).toBeUndefined()
+  })
+  it('hittar förväxlingar i svenska svar, men bara när svaret verkligen hör till ett annat ord', () => {
+    expect(findConfusion('vardag', A, all, false)?.id).toBe(B.id)
+    expect(findConfusion('Vardagen', A, all, false)?.id).toBeUndefined() // böjning räknas inte som exakt träff
+    expect(findConfusion('vardag', B, all, false)).toBeUndefined()
+    expect(findConfusion('nationell helgdag', C, all, false)).toBeUndefined()
+    expect(findConfusion('katt', A, all, false)).toBeUndefined()
+    // Ett svar med ett tecken fel i längre ord räknas (stavfel), kortare ord kräver exakt träff.
+    expect(findConfusion('vardga', A, all, false)).toBeUndefined()
+    expect(findConfusion('helgdagg', A, all, false)?.id).toBe(C.id)
+  })
+  it('föredrar ord man redan börjat lära sig', () => {
+    const D = word(4, { word: '平日', reading: 'へいじつ', meaning: 'Vardag.' })
+    expect(findConfusion('へいじつ', A, [A, B, D], true, (id) => id === D.id)?.id).toBe(D.id)
+  })
+
+  it('kort betydelse: högst två alternativ, utan japanska och parenteser', () => {
+    expect(shortMeaning('Ledig dag / helgdag.')).toBe('Ledig dag / helgdag')
+    expect(shortMeaning('Hot / fara / risk')).toBe('Hot / fara')
+    expect(shortMeaning('Ta hål för piercing (だいぶ開けてる = har tagit ganska många hål).')).toBe('Ta hål för piercing')
+    expect(shortMeaning('Grubbla över, oroa sig för, ta åt sig. 気に病むな = Grubbla inte över det.')).toBe('Grubbla över, oroa sig för, ta åt sig')
+    expect(shortMeaning('x'.repeat(100)).length).toBeLessThanOrEqual(56)
+  })
+
+  it('ett enkelt omprov läggs bara i morgon', () => {
+    const c = withRetry({ ...newCard(NOW), state: State.Review }, 'type_sv', NOW, () => 0.5, true)
+    expect(c.retry).toEqual([{ type: 'type_sv', day: dayIndex(NOW) + 1 }])
+  })
+
+  it('lucktext kan använda en böjd form och ber då om grundformen', () => {
+    const w = word(1, { word: '食べる', reading: 'たべる', examples: [] })
+    const others = [2, 3, 4, 5].map((i) => word(i))
+    const form = { label: 'て-form', ja: '食べて', reading: 'たべて', ex: { ja: '朝ごはんを食べて、学校へ行く。', reading: 'あさごはんを たべて がっこうへ いく', sv: 'Jag äter frukost och går till skolan.', level: 1 as const } }
+    const extra = { examples: [], forms: [form] }
+    const ex = buildExercise('cloze', w, [w, ...others], { extra, stability: 3 })
+    if (ex.type !== 'cloze') throw new Error('fel typ ' + ex.type)
+    expect(ex.form?.label).toBe('て-form')
+    expect(ex.gap).toBe('食べて')
+    expect(ex.before + ex.gap + ex.after).toBe(form.ex.ja)
+    expect(ex.options.map((o) => o.word)).toContain('食べる')
+    // Utan former och utan meningar som innehåller ordet blir det en enklare övning.
+    expect(buildExercise('cloze', w, [w, ...others], { extra: { examples: [], forms: [] } }).type).toBe('mc_sv_ja')
+    // Med både vanliga meningar och former förekommer båda.
+    const both = { examples: [{ ja: '食べるのが好きだ。', reading: 'たべるのが すきだ', sv: 'Jag gillar att äta.', level: 1 as const }], forms: [form] }
+    let seed = 3
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647)
+    const kinds = new Set(Array.from({ length: 40 }, () => { const e = buildExercise('cloze', w, [w, ...others], { extra: both, stability: 3, rnd }); return e.type === 'cloze' && e.form ? 'form' : 'plain' }))
+    expect(kinds).toEqual(new Set(['form', 'plain']))
   })
 })

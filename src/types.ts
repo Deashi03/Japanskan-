@@ -40,6 +40,8 @@ export interface Word {
   /** Antal extra exempelmeningar och böjningar som finns sparade för ordet. */
   extraCount?: number
   formCount?: number
+  /** Andra ord (id) som man har blandat ihop det här ordet med i skrivövningar. */
+  confusable?: string[]
 }
 
 /** FSRS-kortets tillstånd, med datum som millisekunder så det går att spara som JSON. */

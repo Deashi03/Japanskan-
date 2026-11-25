@@ -13,8 +13,8 @@ export function ImportView({ onClose }: { onClose: () => void }) {
   const [busy, setBusy] = useState(false)
 
   const result = useMemo(() => (text.trim() ? parseWordFile(text) : null), [text])
-  const split = useMemo(() => (result ? splitDuplicates(result.words, snap.words.values()) : null), [result, snap.words])
-  const enrich = useMemo(() => (result?.enrich.length ? matchEnrichment(result.enrich, snap.words.values()) : null), [result, snap.words])
+  const split = useMemo(() => (result ? splitDuplicates(result.words, snap.words.values()) : null), [result, snap.version])
+  const enrich = useMemo(() => (result?.enrich.length ? matchEnrichment(result.enrich, snap.words.values()) : null), [result, snap.version])
 
   async function copyPrompt() {
     try {
