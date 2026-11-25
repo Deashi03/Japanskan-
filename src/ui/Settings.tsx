@@ -157,7 +157,7 @@ function Backup() {
     try {
       const json = JSON.parse(await file.text()) as { app?: string; rows?: Row[] }
       if (json.app !== 'japanskan' || !Array.isArray(json.rows)) throw new Error('fel filtyp')
-      const rows = json.rows.filter((r) => r && typeof r.id === 'string' && typeof r.updatedAt === 'number' && ['word', 'card', 'log', 'settings'].includes(r.kind))
+      const rows = json.rows.filter((r) => r && typeof r.id === 'string' && typeof r.updatedAt === 'number' && ['word', 'card', 'log', 'settings', 'extra'].includes(r.kind))
       const n = await mergeRemote(rows, true)
       setMsg(n ? `Återställde ${n} poster.` : 'Allt i filen fanns redan (eller var äldre än det som finns här).')
     } catch {
