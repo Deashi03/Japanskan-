@@ -1,10 +1,8 @@
 import type { Snapshot } from './store'
+import { dueWords } from './session'
 import { isProblem, statusOf, type Status } from './srs'
-
-export function dayKey(ts: number): string {
-  const d = new Date(ts)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
+import { dayIndex, dayKey, dayStart } from './days'
+export { dayKey }
 
 function addDays(ts: number, n: number): number {
   const d = new Date(ts)
@@ -33,21 +31,16 @@ export function streaks(days: Set<string>, now: number) {
 }
 
 export function computeStats(snap: Snapshot, now: number) {
-  const days = new Set<string>()
-  const perDay = new Map<string, { total: number; correct: number }>()
+  // Bygger på dagssummeringarna i store – aldrig på de enskilda svaren.
+  const days = new Set(snap.days.keys())
+  const perDay = snap.days
   let total = 0
   let correct = 0
   let ms = 0
-  for (const l of snap.logs.values()) {
-    const k = dayKey(l.ts)
-    days.add(k)
-    const d = perDay.get(k) ?? { total: 0, correct: 0 }
-    d.total++
-    if (l.correct) d.correct++
-    perDay.set(k, d)
-    total++
-    if (l.correct) correct++
-    ms += Math.min(l.ms, 60_000)
+  for (const d of perDay.values()) {
+    total += d.total
+    correct += d.correct
+    ms += d.ms
   }
   const status: Record<Status, number> = { new: 0, learning: 0, young: 0, mature: 0 }
   let problems = 0
@@ -63,15 +56,18 @@ export function computeStats(snap: Snapshot, now: number) {
     const d = perDay.get(dayKey(t))
     return { ts: t, total: d?.total ?? 0, correct: d?.correct ?? 0 }
   })
-  const forecast = Array.from({ length: 7 }, (_, i) => ({ ts: addDays(now, i), count: 0 }))
-  const todayEnd = new Date(now)
-  todayEnd.setHours(23, 59, 59, 999)
+  // Prognos per dag (dygnsgräns 04:00). Allt som redan är försenat räknas till i dag.
+  const today = dayIndex(now)
+  const forecast = Array.from({ length: 7 }, (_, i) => ({ ts: dayStart(today + i) + 12 * 3_600_000, count: 0 }))
   for (const w of snap.words.values()) {
     const c = snap.cards.get(w.id)
-    if (!c || w.suspended) continue
-    const idx = c.due <= todayEnd.getTime() ? 0 : Math.ceil((c.due - todayEnd.getTime()) / 86_400_000)
+    if (!c || w.suspended || c.state === 0) continue
+    const idx = Math.max(0, dayIndex(c.due) - today)
     if (idx < 7) forecast[idx].count++
   }
+  // Dagens repetitioner: hur många som återstår och hur många som redan är gjorda.
+  const todayLeft = dueWords(snap, now).length
+  const reviewedToday = perDay.get(dayKey(now))?.reviewed.size ?? 0
   const week = history.slice(-7).reduce((a, d) => ({ total: a.total + d.total, correct: a.correct + d.correct }), { total: 0, correct: 0 })
   return {
     words: snap.words.size,
@@ -86,6 +82,8 @@ export function computeStats(snap: Snapshot, now: number) {
     minutes: Math.round(ms / 60_000),
     history,
     forecast,
+    todayLeft,
+    reviewedToday,
     ...streaks(days, now),
   }
 }

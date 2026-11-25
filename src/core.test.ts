@@ -1,8 +1,9 @@
 import 'fake-indexeddb/auto'
 import { describe, expect, it } from 'vitest'
 import { parseWordFile, splitDuplicates } from './importer'
-import { autoRating, exercisesFor, isProblem, knownCard, LEARNING_ORDER, REVIEW_ORDER, newCard, pickExercise, Rating, schedule, State } from './srs'
-import { afterIntro, buildExercise, buildQueue, checkReading, checkSwedish, extraQueue, freshWords, hintFor, meaningPrompt, nextFresh, overtimeQueue, newQuota, requeue, type QItem } from './session'
+import { autoRating, clearRetry, dueRetries, exercisesFor, isDue, isProblem, knownCard, LEARNING_ORDER, missingSkills, REVIEW_ORDER, newCard, pickExercise, Rating, schedule, State, statusOf, withRetry } from './srs'
+import { dayIndex, dayStart, endOfDay } from './days'
+import { afterIntro, buildExercise, buildQueue, checkReading, checkSwedish, extraQueue, freshWords, hintFor, meaningPrompt, nextFresh, overtimeQueue, remainingReviews, newQuota, requeue, type QItem } from './session'
 import { dayKey, streaks } from './stats'
 import { isDark } from './fx'
 import { furigana } from './furigana'
@@ -14,7 +15,7 @@ const word = (i: number, extra: Partial<Word> = {}): Word => ({
   breakdown: [], examples: [], distinctions: [], list: 'L', createdAt: 1, order: i, ...extra,
 })
 const snapOf = (words: Word[], cards: [string, CardData][] = [], settings = DEFAULT_SETTINGS): Snapshot => ({
-  version: 1, words: new Map(words.map((w) => [w.id, w])), cards: new Map(cards), logs: new Map(), settings,
+  version: 1, words: new Map(words.map((w) => [w.id, w])), cards: new Map(cards), logs: new Map(), days: new Map(), settings,
 })
 const NOW = new Date(2026, 10, 22, 12).getTime()
 const DAY = 86_400_000
@@ -49,9 +50,9 @@ describe('import', () => {
     const old = word(1, { synonyms: ['b', 'egen'] })
     const { fresh, updates } = splitDuplicates(parsed, [old])
     expect(fresh.map((w) => w.word)).toEqual(['ny'])
-    expect(updates).toEqual([{ ...old, synonyms: ['b', 'egen', 'a'] }])
+    expect(updates).toEqual([{ word: { ...old, synonyms: ['b', 'egen', 'a'] } }])
     // Har ordet redan alla synonymer händer ingenting.
-    expect(splitDuplicates(parsed, [updates[0]]).updates).toEqual([])
+    expect(splitDuplicates(parsed, [updates[0].word]).updates).toEqual([])
     expect(parseWordFile(JSON.stringify(sample)).words[0].synonyms).toEqual([])
   })
 })
@@ -77,22 +78,103 @@ describe('schemaläggning', () => {
     c = schedule(c, Rating.Again, NOW, 'listen')
     expect(pickExercise(word(1), c)).toBe('mc_ja_sv')
   })
-  it('repetitioner består bara av skrivövningar och lyssna på mening, i turordning', () => {
+  it('repetitioner tar först de färdigheter som saknas, och turas sedan om', () => {
     expect(REVIEW_ORDER).toEqual(['type_from_sv', 'sentence', 'type_sv'])
-    const young = { ...newCard(NOW), state: State.Review, stability: 3 }
-    const mature = { ...young, stability: 30 }
-    const forgotten = { ...young, state: State.Relearning }
-    for (const base of [young, mature, forgotten]) {
-      expect(exercisesFor(word(1), base)).toEqual(REVIEW_ORDER)
-      const picked = [0, 1, 2, 3, 4, 5].map((reps) => pickExercise(word(1), { ...base, reps }))
-      expect(picked).toEqual([...REVIEW_ORDER, ...REVIEW_ORDER])
-    }
+    const fresh = { ...newCard(NOW), state: State.Review, stability: 3, reps: 4 }
+    expect(pickExercise(word(1), fresh)).toBe('type_from_sv')
+    expect(pickExercise(word(1), { ...fresh, skills: { write: 1 } })).toBe('sentence')
+    expect(pickExercise(word(1), { ...fresh, skills: { write: 1, listen: 1 } })).toBe('type_sv')
+    // "Kan inte lyssna nu": lyssningen hoppas över.
+    expect(pickExercise(word(1), { ...fresh, skills: { write: 1 } }, { noListen: true })).toBe('type_sv')
+    const done = { ...fresh, skills: { write: 1, listen: 1, read: 1 } }
+    const picked = [0, 1, 2, 3, 4, 5].map((reps) => pickExercise(word(1), { ...done, reps }))
+    expect(picked).toEqual([...REVIEW_ORDER, ...REVIEW_ORDER])
+    expect(exercisesFor(word(1), done, { noListen: true })).not.toContain('sentence')
+  })
+  it('ett ord räknas som "Kan" först när alla tre färdigheterna klarats vid repetition', () => {
+    let c: CardData = { ...newCard(NOW - 10 * DAY), state: State.Review, stability: 5, difficulty: 5, reps: 5, last_review: NOW - 5 * DAY, due: NOW }
+    expect(statusOf(c)).toBe('learning')
+    expect(missingSkills(c)).toEqual(['write', 'listen', 'read'])
+    c = schedule(c, Rating.Good, NOW, 'type_from_sv')
+    expect(missingSkills(c)).toEqual(['listen', 'read'])
+    // Så länge en färdighet saknas kommer ordet tillbaka redan i morgon.
+    expect(c.due).toBe(endOfDay(NOW))
+    // Dra-övningar och flerval räknas inte som bevis.
+    expect(missingSkills(schedule(c, Rating.Good, NOW, 'match'))).toEqual(['listen', 'read'])
+    c = schedule(c, Rating.Good, NOW + DAY, 'sentence')
+    c = schedule(c, Rating.Good, NOW + 2 * DAY, 'type_sv')
+    expect(missingSkills(c)).toEqual([])
+    expect(['young', 'mature']).toContain(statusOf(c))
+    expect(c.due).toBeGreaterThan(endOfDay(NOW + 2 * DAY))
+    // Fel svar räknas inte som klarad färdighet.
+    expect(schedule({ ...c, skills: {} }, Rating.Again, NOW + 9 * DAY, 'type_sv').skills).toEqual({})
+  })
+  it('repetitioner räknas per dag med dygnsgräns 04:00, inte per timme', () => {
+    const at = (h: number, d = 22) => new Date(2026, 10, d, h).getTime()
+    const card = (due: number): CardData => ({ ...newCard(at(0)), state: State.Review, due })
+    // Förfaller i kväll: går att repetera redan i morse.
+    expect(isDue(card(at(21)), at(8))).toBe(true)
+    // Förfaller i morgon förmiddag: inte i dag.
+    expect(isDue(card(at(10, 23)), at(8))).toBe(false)
+    // Kl. 02 på natten räknas fortfarande till gårdagen.
+    expect(dayIndex(at(2, 23))).toBe(dayIndex(at(20, 22)))
+    expect(dayIndex(at(5, 23))).toBe(dayIndex(at(20, 22)) + 1)
+    expect(endOfDay(at(20, 22))).toBe(at(4, 23))
+    expect(dayStart(dayIndex(at(9, 23)))).toBe(at(4, 23))
+  })
+  it('fel svar ger omprov med samma övning dagen efter och inom tre dagar till', () => {
+    const today = dayIndex(NOW)
+    const c = withRetry({ ...newCard(NOW), state: State.Review }, 'type_sv', NOW, () => 0.99)
+    expect(c.retry).toEqual([{ type: 'type_sv', day: today + 1 }, { type: 'type_sv', day: today + 4 }])
+    expect(withRetry(c, 'type_sv', NOW, () => 0).retry).toEqual([{ type: 'type_sv', day: today + 1 }, { type: 'type_sv', day: today + 2 }])
+    // Inget omprov i dag; i morgon finns ett.
+    expect(dueRetries(c, NOW)).toEqual([])
+    expect(dueRetries(c, NOW + DAY)).toEqual([{ type: 'type_sv', day: today + 1 }])
+    // Ett klarat omprov stryks, bara det som förfallit.
+    expect(clearRetry(c, 'type_sv', NOW + DAY).retry).toEqual([{ type: 'type_sv', day: today + 4 }])
+    expect(clearRetry(c, 'type_sv', NOW).retry).toEqual(c.retry)
+    // Omprov gör att ordet kommer med i dagens kö med rätt övning, även om det inte förfallit.
+    const words = [word(0), word(1)]
+    const snap = snapOf(words, [['w0', { ...c, due: NOW + 30 * DAY }]])
+    expect(buildQueue(snap, NOW + DAY).filter((q) => q.wordId === 'w0')).toEqual([{ wordId: 'w0', kind: 'quiz', force: 'type_sv', retry: true }])
+    expect(buildQueue(snap, NOW).some((q) => q.wordId === 'w0')).toBe(false)
+  })
+  it('ett fel i passet ger ett omprov med samma övning i slutet, och tiden ute gör klart det', () => {
+    const r1: QItem = { wordId: 'r1', kind: 'quiz' }
+    const q: QItem[] = [r1, { wordId: 'r2', kind: 'quiz' }, { wordId: 'r3', kind: 'quiz' }]
+    const after = requeue(q, [{ item: r1, correct: false, stillLearning: false, type: 'sentence' }])
+    expect(after.map((i) => i.wordId)).toEqual(['r2', 'r3', 'r1'])
+    expect(after[2]).toMatchObject({ force: 'sentence', again: true, retry: true })
+    // Två fel på samma övning ger fortfarande bara ett omprov.
+    expect(requeue(after, [{ item: after[0], correct: true, stillLearning: false }, { item: r1, correct: false, stillLearning: false, type: 'sentence' }]).filter((i) => i.again)).toHaveLength(1)
+    // Fel på själva omprovet ger inget nytt omprov i samma pass.
+    const again = after[2]
+    expect(requeue(after, [{ item: again, correct: false, stillLearning: false, type: 'sentence' }]).some((i) => i.again)).toBe(false)
+    // När tiden är ute: omprov och påbörjade nya ord görs klart, vanliga repetitioner väntar.
+    expect(overtimeQueue(after).map((i) => i.wordId)).toEqual(['r1'])
+    expect(remainingReviews(after).map((i) => i.wordId)).toEqual(['r2', 'r3'])
+  })
+  it('extra övning är ett slumpat urval där svaga ord har större chans', () => {
+    const many = Array.from({ length: 40 }, (_, i) => word(i))
+    const cards = many.map((w, i): [string, CardData] => [w.id, { ...newCard(NOW), state: State.Review, stability: i < 5 ? 1 : 30, recent: i === 39 ? [false, false] : [true] }])
+    const snap = snapOf(many, cards)
+    let seed = 1
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647)
+    const picks = Array.from({ length: 200 }, () => extraQueue(snap, rnd).map((q) => q.wordId))
+    expect(picks.every((p) => p.length === 10 && new Set(p).size === 10)).toBe(true)
+    // Olika ord varje gång, inte samma tio.
+    expect(new Set(picks.map((p) => p.sort().join())).size).toBeGreaterThan(150)
+    const count = (id: string) => picks.filter((p) => p.includes(id)).length
+    expect(count('w39')).toBeGreaterThan(count('w20'))
+    expect(count('w0')).toBeGreaterThan(count('w20'))
   })
   it('”kan redan” hoppar över inlärningen, ger ett intervall på flera dagar och räknas inte i dagens kvot', () => {
     const c = knownCard(NOW)
     expect(c.state).toBe(State.Review)
     expect(c.due).toBeGreaterThan(NOW + 2 * DAY)
     expect(c.known).toBe(true)
+    // Men det räknas inte som "Kan" förrän färdigheterna har prövats.
+    expect(statusOf(c)).toBe('learning')
     const snap = snapOf([word(0), word(1), word(2)], [['w0', c]], { ...DEFAULT_SETTINGS, dailyNewCap: 5 })
     expect(newQuota(snap, NOW)).toBe(5)
     expect(nextFresh(snap, [{ wordId: 'w1', kind: 'intro' }])?.id).toBe('w2')
@@ -238,14 +320,6 @@ describe('session', () => {
     const answered = [...types.values()].flat().length
     expect(firstReviewAt).toBeGreaterThan(answered - 8)
   })
-  it('extra övning tar problemord först', () => {
-    const c = (recent: boolean[], stability: number): CardData => ({ ...newCard(NOW), state: State.Review, recent, stability })
-    const cards = words.map((w, i): [string, CardData] => [w.id, c(i === 11 ? [false, false] : [true], i + 1)])
-    const ids = extraQueue(snapOf(words, cards)).map((q) => q.wordId)
-    expect(ids).toHaveLength(10)
-    expect(ids).toContain('w11')
-    expect(ids).not.toContain('w10')
-  })
   it('övningar faller tillbaka när det finns för få ord', () => {
     expect(buildExercise('mc_ja_sv', words[0], [words[0]]).type).toBe('type_sv')
     expect(buildExercise('match', words[0], words.slice(0, 2)).type).toBe('mc_sv_ja')
@@ -263,7 +337,8 @@ describe('session', () => {
     expect(listen.type === 'listen' && listen.options.length).toBe(4)
     // Utan uppläsning på enheten blir lyssningsövningar vanliga läsövningar.
     expect(buildExercise('listen', pool[0], pool, { canListen: false }).type).toBe('mc_ja_sv')
-    expect(buildExercise('sentence', pool[0], pool, { canListen: false }).type).toBe('mc_ja_sv')
+    expect(buildExercise('sentence', pool[0], pool, { canListen: false }).type).toBe('type_sv')
+    expect(buildExercise('form', pool[0], pool, { canListen: false }).type).toBe('type_sv')
 
     const sentence = buildExercise('sentence', pool[0], pool)
     if (sentence.type !== 'sentence') throw new Error('fel typ')
@@ -278,6 +353,16 @@ describe('session', () => {
 
     // Ord utan exempel, eller där ordet står böjt i meningen, får en enklare övning i stället.
     expect(buildExercise('sentence', words[0], pool).type).toBe('listen')
+    // Med meningsbanken används den i stället för de två enkla meningarna.
+    const bank = { examples: [ex('難しい文の中で' + pool[0].word + 'を使う。', 'Svår mening.')], forms: [] }
+    const fromBank = buildExercise('sentence', pool[0], pool, { extra: bank })
+    expect(fromBank.type === 'sentence' && fromBank.example.sv).toBe('Svår mening.')
+    // Böjningsövningen använder en böjd form och dess mening.
+    const form = { label: 'passiv', ja: '語0れた', reading: 'ごれた', ex: ex('彼に語0れた。', 'Det gjordes av honom.') }
+    const f = buildExercise('form', pool[0], pool, { extra: { examples: [], forms: [form] } })
+    expect(f.type === 'form' && f.form.label).toBe('passiv')
+    expect(f.type === 'form' && f.choices).toContain('Det gjordes av honom.')
+    expect(buildExercise('form', pool[0], pool).type).toBe('sentence')
     expect(buildExercise('cloze', { ...pool[0], examples: [ex('ぜんぜん違う文。', 'x')] }, pool).type).toBe('mc_sv_ja')
   })
   it('rättar svenska svar generöst men inte fel svar', () => {

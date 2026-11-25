@@ -1,15 +1,22 @@
 import { toHiragana, toKana } from 'wanakana'
 import type { Snapshot } from './store'
-import { isProblem, State } from './srs'
-import type { Example, ExerciseType, Word } from './types'
-import { dayKey } from './stats'
+import { dueRetries, isDue, isProblem, State } from './srs'
+import type { Example, ExerciseType, Form, Word, WordExtra } from './types'
+import { dayKey } from './days'
 
 export interface QItem {
   wordId: string
   kind: 'intro' | 'quiz'
+  /** Extra övning: påverkar inte schemat. */
   extra?: boolean
   /** Ordet håller på att läras in och ska bli klart före vanliga repetitioner. */
   learning?: boolean
+  /** En bestämd övning – används för omprov efter ett fel. */
+  force?: ExerciseType
+  /** Omprov (efter ett fel i dag eller en tidigare dag) snarare än en vanlig repetition. */
+  retry?: boolean
+  /** Omprov i slutet av passet efter ett fel i just det här passet. */
+  again?: boolean
 }
 
 export function shuffle<T>(arr: T[], rnd: () => number = Math.random): T[] {
@@ -36,19 +43,26 @@ export function newQuota(snap: Snapshot, now: number): number {
   return Math.max(0, Math.min(newPerSession, dailyNewCap - introducedToday))
 }
 
-export function countDue(snap: Snapshot, now: number) {
-  let due = 0
-  let fresh = 0
-  let chosen = 0
+/** Ord som ska repeteras i dag (påbörjade ord som förfaller i dag, eller har ett omprov i dag). */
+export function dueWords(snap: Snapshot, now: number): Word[] {
+  const out: Word[] = []
   for (const w of snap.words.values()) {
     if (w.suspended) continue
     const c = snap.cards.get(w.id)
-    if (!c) {
-      fresh++
-      if (w.priority) chosen++
-    } else if (c.due <= now) due++
+    if (c && c.state !== State.New && (isDue(c, now) || dueRetries(c, now).length > 0)) out.push(w)
   }
-  return { due, fresh, chosen, newNow: Math.min(fresh, newQuota(snap, now)) }
+  return out
+}
+
+export function countDue(snap: Snapshot, now: number) {
+  let fresh = 0
+  let chosen = 0
+  for (const w of snap.words.values()) {
+    if (w.suspended || snap.cards.has(w.id)) continue
+    fresh++
+    if (w.priority) chosen++
+  }
+  return { due: dueWords(snap, now).length, fresh, chosen, newNow: Math.min(fresh, newQuota(snap, now)) }
 }
 
 /** Alla nya (ej påbörjade) ord i den ordning de ska introduceras.
@@ -68,24 +82,29 @@ export function freshWords(snap: Snapshot, exclude: Set<string> = new Set()): Wo
   return [...chosen, ...mixed]
 }
 
-/** Sessionens kö: först nya ord (introduktionskort), sedan repetitioner med mest försenade först. */
+/** Sessionens kö: först nya ord (introduktionskort), sedan dagens repetitioner med mest
+ *  försenade först. Ord med ett omprov i dag får den övning de gjorde fel på. */
 export function buildQueue(snap: Snapshot, now: number): QItem[] {
-  const active = [...snap.words.values()].filter((w) => !w.suspended)
   const unfinishedIntros: Word[] = []
-  const due: Word[] = []
-  for (const w of active) {
+  for (const w of snap.words.values()) {
     const c = snap.cards.get(w.id)
-    if (!c) continue
-    if (c.state === State.New) unfinishedIntros.push(w)
-    else if (c.due <= now) due.push(w)
+    if (!w.suspended && c?.state === State.New) unfinishedIntros.push(w)
   }
-  const fresh = freshWords(snap)
-  due.sort((a, b) => snap.cards.get(a.id)!.due - snap.cards.get(b.id)!.due)
-  const intros = [...unfinishedIntros, ...fresh.slice(0, newQuota(snap, now))]
-  return [
-    ...intros.map((w): QItem => ({ wordId: w.id, kind: 'intro' })),
-    ...due.map((w): QItem => ({ wordId: w.id, kind: 'quiz', learning: snap.cards.get(w.id)!.state !== State.Review || undefined })),
-  ].sort((a, b) => Number(isNewPhase(b)) - Number(isNewPhase(a)))
+  const due = dueWords(snap, now).sort((a, b) => snap.cards.get(a.id)!.due - snap.cards.get(b.id)!.due)
+  const intros = [...unfinishedIntros, ...freshWords(snap).slice(0, newQuota(snap, now))]
+  const reviews: QItem[] = []
+  for (const w of due) {
+    const c = snap.cards.get(w.id)!
+    const retries = dueRetries(c, now)
+    const learning = c.state !== State.Review || undefined
+    if (isDue(c, now)) reviews.push({ wordId: w.id, kind: 'quiz', learning, force: retries[0]?.type, retry: retries.length > 0 || undefined })
+    // Övriga omprov för ordet (en annan övning än den som redan står i kön).
+    const rest = isDue(c, now) ? retries.slice(1) : retries
+    for (const r of rest) reviews.push({ wordId: w.id, kind: 'quiz', force: r.type, retry: true })
+  }
+  return [...intros.map((w): QItem => ({ wordId: w.id, kind: 'intro' })), ...reviews].sort(
+    (a, b) => Number(isNewPhase(b)) - Number(isNewPhase(a)),
+  )
 }
 
 const isNewPhase = (q: QItem) => q.kind === 'intro' || !!q.learning
@@ -102,49 +121,75 @@ export function afterIntro(queue: QItem[], item: QItem): QItem[] {
   return rest
 }
 
-/** Fel svar kommer tillbaka snart. Ord som fortfarande lärs in kommer tillbaka efter några
- *  frågor, men före de vanliga repetitionerna, så att nya ord hinner få alla övningstyper.
- *  Övriga ord lämnar sessionen. */
-export function requeue(queue: QItem[], items: { item: QItem; correct: boolean; stillLearning: boolean }[]): QItem[] {
+export interface Answered {
+  item: QItem
+  correct: boolean
+  /** Ordet håller fortfarande på att läras in (nytt ord som inte klarat alla steg). */
+  stillLearning: boolean
+  /** Övningen som gjordes – ett fel ger ett omprov med samma övning i slutet av passet. */
+  type?: ExerciseType
+}
+
+/** Ordnar kön efter ett svar:
+ *  - Nya ord som fortfarande lärs in kommer tillbaka efter några frågor, men före de vanliga
+ *    repetitionerna, så att de hinner få alla övningstyper.
+ *  - Ett fel ger dessutom ett omprov med exakt samma övning i slutet av passet.
+ *  - Övriga ord lämnar passet. */
+export function requeue(queue: QItem[], items: Answered[]): QItem[] {
   const gone = new Set(items.map((i) => i.item))
-  const rest = queue.filter((q) => !gone.has(q))
-  for (const { item, correct, stillLearning } of items) {
-    if (item.extra) {
-      if (!correct) rest.splice(Math.min(3, rest.length), 0, { ...item })
-      continue
+  let rest = queue.filter((q) => !gone.has(q))
+  for (const { item, correct, stillLearning, type } of items) {
+    if (stillLearning && !item.extra) {
+      let lead = 0
+      while (lead < rest.length && isNewPhase(rest[lead])) lead++
+      const pos = correct ? Math.max(lead, 2) : Math.max(Math.min(lead, 3), 2)
+      rest.splice(Math.min(4, pos, rest.length), 0, { wordId: item.wordId, kind: 'quiz', learning: true })
     }
-    if (!stillLearning) continue
-    let lead = 0
-    while (lead < rest.length && isNewPhase(rest[lead])) lead++
-    const pos = correct ? Math.max(lead, 2) : Math.max(Math.min(lead, 3), 2)
-    rest.splice(Math.min(4, pos, rest.length), 0, { ...item, learning: true })
+    // Ett fel ger ett omprov i slutet av passet – men ett fel på själva omprovet ger inget
+    // nytt (då skulle passet aldrig ta slut); det tas i stället om i morgon.
+    if (!correct && type && !item.again) {
+      // Bara ett omprov per ord och övning i slutet av passet.
+      rest = rest.filter((q) => !(q.wordId === item.wordId && q.force === type && q.again))
+      rest.push({ wordId: item.wordId, kind: 'quiz', force: type, retry: true, again: true, extra: item.extra })
+    }
   }
   return rest
 }
 
-/** När tiden är ute: bara frågorna som behövs för att göra klart ord som redan
- *  håller på att läras in. Ord som inte hunnit presenteras och vanliga repetitioner väntar. */
+/** När tiden är ute: frågorna som behövs för att göra klart nya ord som redan påbörjats,
+ *  och omproven efter dagens fel. Ord som inte hunnit presenteras och vanliga repetitioner väntar. */
 export function overtimeQueue(queue: QItem[]): QItem[] {
-  return queue.filter((q) => q.kind === 'quiz' && q.learning && !q.extra)
+  return queue.filter((q) => q.kind === 'quiz' && !q.extra && (q.learning || q.again))
 }
 
-/** Extra övning när inget är schemalagt: problemord först, sedan de svagaste orden. */
-export function extraQueue(snap: Snapshot, rnd: () => number = Math.random): QItem[] {
+/** Dagens repetitioner som återstår i kön (används för att fråga om man vill fortsätta). */
+export function remainingReviews(queue: QItem[]): QItem[] {
+  return queue.filter((q) => q.kind === 'quiz' && !q.extra && !q.learning && !q.again)
+}
+
+/** Extra övning när inget är schemalagt: ett slumpat urval bland alla ord man studerat, där
+ *  problemord och svaga ord har något större chans att komma med. */
+export function extraQueue(snap: Snapshot, rnd: () => number = Math.random, count = 10): QItem[] {
   const pool = [...snap.words.values()].filter((w) => {
     const c = snap.cards.get(w.id)
     return !w.suspended && c && c.state !== State.New
   })
-  pool.sort((a, b) => {
-    const ca = snap.cards.get(a.id)!
-    const cb = snap.cards.get(b.id)!
-    return Number(isProblem(cb)) - Number(isProblem(ca)) || ca.stability - cb.stability
-  })
-  return shuffle(pool.slice(0, 10), rnd).map((w) => ({ wordId: w.id, kind: 'quiz', extra: true }))
+  // Viktad dragning utan återläggning (Efraimidis–Spirakis): nyckel = slumptal^(1/vikt).
+  const weight = (w: Word) => {
+    const c = snap.cards.get(w.id)!
+    return (isProblem(c) ? 3 : 1) * (c.stability < 7 ? 1.5 : 1)
+  }
+  return pool
+    .map((w) => ({ w, key: Math.pow(rnd(), 1 / weight(w)) }))
+    .sort((a, b) => b.key - a.key)
+    .slice(0, count)
+    .map(({ w }) => ({ wordId: w.id, kind: 'quiz', extra: true }))
 }
 
 export type Exercise =
   | { type: 'mc_ja_sv' | 'mc_sv_ja' | 'listen'; word: Word; options: Word[] }
   | { type: 'sentence'; word: Word; example: Example; choices: string[] }
+  | { type: 'form'; word: Word; form: Form; choices: string[] }
   | { type: 'cloze'; word: Word; example: Example; before: string; after: string; options: Word[] }
   | { type: 'type_sv' | 'type_from_sv'; word: Word }
   | { type: 'match'; word: Word; words: Word[]; graded: string[] }
@@ -154,27 +199,41 @@ export interface BuildOptions {
   rnd?: () => number
   /** Ord som redan introducerats – används helst som utfyllnad och svarsalternativ. */
   known?: Set<string>
-  /** Om enheten kan läsa upp japanska. Utan det byts lyssningsövningar mot läsövningar. */
+  /** Om lyssningsövningar går att göra just nu. Annars blir de läs- eller skrivövningar. */
   canListen?: boolean
+  /** Ordets alla exempelmeningar och böjningar, om de finns inlästa. */
+  extra?: WordExtra
+}
+
+/** Svenska översättningar från andra ords meningar – felaktiga svarsalternativ. */
+function wrongTranslations(others: Word[], correct: string, rnd: () => number): string[] {
+  return [...new Set(shuffle(others, rnd).flatMap((w) => w.examples.slice(0, 1).map((e) => e.sv)))].filter((sv) => sv && sv !== correct).slice(0, 3)
 }
 
 /** Bygger en övning. Faller tillbaka på en enklare typ om ordet eller ordlistan inte räcker till. */
 export function buildExercise(type: ExerciseType, word: Word, all: Word[], opts: BuildOptions = {}): Exercise {
-  const { partners = [], rnd = Math.random, known, canListen = true } = opts
+  const { partners = [], rnd = Math.random, known, canListen = true, extra } = opts
   const others = all.filter((w) => w.id !== word.id && w.word !== word.word && w.meaning !== word.meaning)
   const knownFirst = (list: Word[]) => [...list.filter((w) => known?.has(w.id)), ...list.filter((w) => !known?.has(w.id))]
+  // Repetitionerna använder hela meningsbanken; de två enkla meningarna från introduktionen
+  // kommer bara med om det inte finns några andra.
+  const bank = (extra?.examples.length ? extra.examples : word.examples).filter((e) => e.ja && e.sv)
 
+  if (type === 'form') {
+    const forms = (extra?.forms ?? []).filter((f) => f.ex?.ja && f.ex?.sv)
+    const form = forms.length ? forms[Math.floor(rnd() * forms.length)] : undefined
+    const wrong = form ? wrongTranslations(others, form.ex.sv, rnd) : []
+    if (form && wrong.length && canListen) return { type, word, form, choices: shuffle([form.ex.sv, ...wrong], rnd) }
+    type = 'sentence'
+  }
   if (type === 'sentence') {
-    const usable = word.examples.filter((e) => e.ja && e.sv)
-    const example = usable.length ? usable[Math.floor(rnd() * usable.length)] : undefined
-    const wrong = [...new Set(shuffle(others, rnd).flatMap((w) => w.examples.slice(0, 1).map((e) => e.sv)))]
-      .filter((sv) => sv && sv !== example?.sv)
-      .slice(0, 3)
+    const example = bank.length ? bank[Math.floor(rnd() * bank.length)] : undefined
+    const wrong = example ? wrongTranslations(others, example.sv, rnd) : []
     if (example && wrong.length && canListen) return { type, word, example, choices: shuffle([example.sv, ...wrong], rnd) }
-    type = 'listen'
+    type = canListen ? 'listen' : 'type_sv'
   }
   if (type === 'cloze') {
-    const example = shuffle(word.examples, rnd).find((e) => e.ja.includes(word.word))
+    const example = shuffle(bank, rnd).find((e) => e.ja.includes(word.word))
     const distractors = knownFirst(shuffle(others, rnd)).slice(0, 3)
     if (example && distractors.length) {
       const at = example.ja.indexOf(word.word)

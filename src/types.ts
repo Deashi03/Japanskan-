@@ -1,5 +1,15 @@
 export interface Breakdown { kanji: string; reading: string; meaning: string }
-export interface Example { ja: string; reading: string; sv: string }
+export interface Example { ja: string; reading: string; sv: string; level?: 1 | 2 | 3 }
+
+/** En böjningsform av ordet, med en mening där formen används. */
+export interface Form { label: string; ja: string; reading: string; ex: Example }
+
+/** Grammatisk förklaring för ord som är grammatik snarare än vokabulär. */
+export interface Grammar { formula: string; function: string; explanation: string; pitfalls?: string }
+
+/** Ordets stora innehåll – alla exempelmeningar och böjningar. Sparas för sig och läses
+ *  in först när det behövs, så att ordlistan förblir snabb hur mycket innehåll som än finns. */
+export interface WordExtra { examples: Example[]; forms: Form[] }
 export interface Distinction { word: string; reading: string; meaning: string }
 
 export interface Word {
@@ -20,6 +30,16 @@ export interface Word {
   suspended?: boolean
   /** Tidpunkt då ordet valdes att läras härnäst. Valda ord introduceras före alla andra nya ord. */
   priority?: number
+  /** Ordklass, t.ex. ["u"] eller ["noun", "suru"]. */
+  pos?: string[]
+  /** Ämnen ur en fast lista, t.ex. ["juridik", "titlar och roller"]. */
+  categories?: string[]
+  /** Fria sökord, t.ex. ["åklagare", "domstol"]. */
+  tags?: string[]
+  grammar?: Grammar
+  /** Antal extra exempelmeningar och böjningar som finns sparade för ordet. */
+  extraCount?: number
+  formCount?: number
 }
 
 /** FSRS-kortets tillstånd, med datum som millisekunder så det går att spara som JSON. */
@@ -40,7 +60,14 @@ export interface CardData {
   lastExercise?: ExerciseType
   /** Ordet markerades som "kan redan" och räknas inte som ett nytt ord i dagens kvot. */
   known?: boolean
+  /** Antal klarade repetitioner per färdighet. Ordet räknas som inlärt först när alla tre är klarade. */
+  skills?: Partial<Record<Skill, number>>
+  /** Övningar som ska göras om efter ett fel: vilken övning och vilken dag (dagnummer). */
+  retry?: Retry[]
 }
+
+export type Skill = 'listen' | 'read' | 'write'
+export interface Retry { type: ExerciseType; day: number }
 
 export type ExerciseType =
   | 'mc_ja_sv'
@@ -52,6 +79,7 @@ export type ExerciseType =
   | 'type_sv'
   | 'type_from_sv'
   | 'type_reading'
+  | 'form'
 
 export interface LogData {
   wordId: string
@@ -62,6 +90,9 @@ export interface LogData {
   ms: number
   extra?: boolean
   isNew?: boolean
+  retry?: boolean
+  /** Svaret gällde en repetition av ett redan inlärt ord (inte inlärning av ett nytt). */
+  review?: boolean
 }
 
 export type ThemeMode = 'light' | 'dark' | 'system' | 'schedule'
@@ -99,7 +130,7 @@ export const DEFAULT_SETTINGS: Settings = {
   audioLag: 0,
 }
 
-export type Kind = 'word' | 'card' | 'log' | 'settings'
+export type Kind = 'word' | 'card' | 'log' | 'settings' | 'extra'
 
 export interface Row {
   id: string

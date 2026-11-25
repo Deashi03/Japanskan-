@@ -1,9 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { formatDue, isProblem, knownCard, STATUS_LABEL, statusOf } from '../srs'
 import { byOrder } from '../session'
-import { actions, useStore } from '../store'
+import { actions, useExtra, useStore } from '../store'
 import type { Breakdown, Distinction, Example, Word } from '../types'
-import { Icon, Ja, Modal, WordCard } from './bits'
+import { FuriText, Icon, Ja, Modal, POS_LABEL, SpeakButton, WordCard } from './bits'
 import { addToWishlist, wishCount, Wishlist } from './Wishlist'
 
 type Filter = 'all' | 'chosen' | 'new' | 'learning' | 'known' | 'problem' | 'suspended'
@@ -16,6 +16,25 @@ const FILTERS: [Filter, string][] = [
   ['problem', 'Problemord'],
   ['suspended', 'Pausade'],
 ]
+
+/** All text ett ord går att hitta på: japanska, läsning, betydelse, synonymer, ämnen,
+ *  sökord och ordklass. Sparas per ord så att den bara byggs om när ordet ändras. */
+const searchCache = new WeakMap<Word, string>()
+function searchText(w: Word): string {
+  let t = searchCache.get(w)
+  if (t === undefined) {
+    t = [w.word, w.reading, w.meaning, ...(w.synonyms ?? []), ...(w.categories ?? []), ...(w.tags ?? []), ...(w.pos ?? []).map((p) => POS_LABEL[p] ?? p)]
+      .join('\n')
+      .toLowerCase()
+    searchCache.set(w, t)
+  }
+  return t
+}
+
+/** Alla sökord måste finnas med ("juridik titel" hittar ord som har båda). */
+const matches = (w: Word, terms: string[]) => terms.every((term) => searchText(w).includes(term))
+
+const PAGE = 80
 
 export function WordList({ onImport }: { onImport: () => void }) {
   const snap = useStore()
@@ -42,17 +61,43 @@ export function WordList({ onImport }: { onImport: () => void }) {
     void action()
     stopSelecting()
   }
+  // Långa listor ritas en bit i taget; nästa bit läggs till när man scrollar ner.
+  const [limit, setLimit] = useState(PAGE)
+  const sentinel = useRef<HTMLLIElement>(null)
+  useEffect(() => setLimit(PAGE), [query, filter, list])
+  useEffect(() => {
+    const el = sentinel.current
+    if (!el) return
+    const io = new IntersectionObserver((entries) => entries.some((e) => e.isIntersecting) && setLimit((n) => n + PAGE), { rootMargin: '600px' })
+    io.observe(el)
+    return () => io.disconnect()
+  })
+  // Svepmarkering: dra fingret längs rutorna till vänster för att markera eller avmarkera flera.
+  const swipe = useRef<{ on: boolean; seen: Set<string> } | null>(null)
+  const [swiping, setSwiping] = useState(false)
+  const swipeTo = (id: string | undefined) => {
+    const s = swipe.current
+    if (!s || !id || s.seen.has(id)) return
+    s.seen.add(id)
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (s.on) next.add(id)
+      else next.delete(id)
+      return next
+    })
+  }
+  const [examplesFor, setExamplesFor] = useState<Word | null>(null)
   const [wished, setWished] = useState('')
   const wishes = wishCount(snap.settings.wishlist)
   const now = Date.now()
 
   const lists = useMemo(() => [...new Set([...snap.words.values()].map((w) => w.list))].sort(), [snap.words])
   const words = useMemo(() => {
-    const q = query.trim().toLowerCase()
+    const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
     return [...snap.words.values()]
       .filter((w) => {
         if (list && w.list !== list) return false
-        if (q && !(w.word.includes(q) || w.reading.includes(q) || w.meaning.toLowerCase().includes(q) || w.synonyms?.some((x) => x.toLowerCase().includes(q)))) return false
+        if (terms.length && !matches(w, terms)) return false
         const c = snap.cards.get(w.id)
         const s = statusOf(c)
         if (filter === 'chosen') return !c && !!w.priority
@@ -151,14 +196,32 @@ export function WordList({ onImport }: { onImport: () => void }) {
           )}
         </div>
       ) : (
-        <ul className={'wordlist' + (selecting ? ' selecting' : '')}>
-          {words.map((w) => {
+        <ul
+          className={'wordlist' + (selecting ? ' selecting' : '')}
+          onPointerMove={(e) => swipe.current && swipeTo((document.elementFromPoint(e.clientX, e.clientY)?.closest('[data-id]') as HTMLElement | null)?.dataset.id)}
+          onPointerUp={() => { swipe.current = null; setSwiping(false) }}
+          onPointerCancel={() => { swipe.current = null; setSwiping(false) }}
+        >
+          {words.slice(0, limit).map((w) => {
             const c = snap.cards.get(w.id)
             const s = statusOf(c)
             return (
-              <li key={w.id} className="wordrow-wrap">
+              <li key={w.id} className="wordrow-wrap" data-id={w.id}>
                 {selecting ? (
-                  <button className={'pick box' + (selected.has(w.id) ? ' on' : '')} role="checkbox" aria-checked={selected.has(w.id)} aria-label={`Markera ${w.word}`} onClick={() => toggle(w.id)}>
+                  <button
+                    className={'pick box' + (selected.has(w.id) ? ' on' : '')}
+                    role="checkbox"
+                    aria-checked={selected.has(w.id)}
+                    aria-label={`Markera ${w.word}`}
+                    onPointerDown={(e) => {
+                      // Första rutan avgör om svepet markerar eller avmarkerar.
+                      e.currentTarget.releasePointerCapture?.(e.pointerId)
+                      swipe.current = { on: !selected.has(w.id), seen: new Set() }
+                      setSwiping(true)
+                      swipeTo(w.id)
+                    }}
+                    onClick={(e) => e.detail === 0 && toggle(w.id)}
+                  >
                     {selected.has(w.id) && <Icon name="check" size={18} />}
                   </button>
                 ) : !c && !w.suspended && (
@@ -185,6 +248,7 @@ export function WordList({ onImport }: { onImport: () => void }) {
               </li>
             )
           })}
+          {words.length > limit && <li ref={sentinel} className="more">Visar {limit} av {words.length} …</li>}
         </ul>
       )}
 
@@ -192,6 +256,21 @@ export function WordList({ onImport }: { onImport: () => void }) {
         <Modal title="Ord" onClose={() => setOpenId(null)}>
           <WordCard word={open} />
           {!!open.synonyms?.length && <p className="synonyms"><span>Godkänns också:</span> {open.synonyms.join(', ')}</p>}
+          {!!(open.categories?.length || open.tags?.length) && (
+            <div className="topics">
+              {(open.categories ?? []).map((c) => (
+                <button key={c} className="topic" onClick={() => { setQuery(c); setOpenId(null) }}><Icon name="tag" size={14} /> {c}</button>
+              ))}
+              {(open.tags ?? []).map((t) => (
+                <button key={t} className="topic soft" onClick={() => { setQuery(t); setOpenId(null) }}>{t}</button>
+              ))}
+            </div>
+          )}
+          {!!open.extraCount && (
+            <button className="btn examples-btn" onClick={() => setExamplesFor(open)}>
+              <Icon name="book" size={18} /> Alla exempelmeningar ({open.extraCount}){open.formCount ? ` och böjningar (${open.formCount})` : ''}
+            </button>
+          )}
           <dl className="meta">
             <div><dt>Status</dt><dd>{open.suspended ? 'Pausat' : STATUS_LABEL[statusOf(openCard)]}{isProblem(openCard) ? ' · problemord' : ''}</dd></div>
             <div><dt>Nästa repetition</dt><dd>{open.suspended ? '–' : openCard && statusOf(openCard) !== 'new' ? formatDue(openCard.due, now) : 'inte påbörjat'}</dd></div>
@@ -224,7 +303,7 @@ export function WordList({ onImport }: { onImport: () => void }) {
         </Modal>
       )}
       {selecting && picked.length > 0 && (
-        <div className="bulk-bar" role="toolbar" aria-label="Åtgärder för markerade ord">
+        <div className={'bulk-bar' + (swiping ? ' faded' : '')} role="toolbar" aria-label="Åtgärder för markerade ord">
           <strong>{picked.length} markerade</strong>
           <div className="row wrap">
             {canQueue.length > 0 && <button className="btn small primary" onClick={() => bulk(() => actions.saveWords(canQueue.map((w, i) => ({ ...w, priority: Date.now() + i }))))}>Lär mig härnäst ({canQueue.length})</button>}
@@ -233,6 +312,7 @@ export function WordList({ onImport }: { onImport: () => void }) {
           </div>
         </div>
       )}
+      {examplesFor && <ExamplesModal word={examplesFor} onClose={() => setExamplesFor(null)} />}
       {wishOpen && (
         <Modal title="Önskelista" onClose={() => setWishOpen(false)}>
           <Wishlist />
@@ -316,6 +396,56 @@ function WordEditor({ word, onSave, onClose }: { word: Word; onSave: (w: Word) =
           <button type="submit" className="btn primary grow" disabled={!valid}>Spara</button>
         </div>
       </form>
+    </Modal>
+  )
+}
+
+const LEVEL_LABEL = { 1: 'Enkla', 2: 'Mellannivå', 3: 'Svårare' } as const
+
+/** Ordets alla exempelmeningar, sorterade efter svårighet, och dess böjningar. */
+function ExamplesModal({ word, onClose }: { word: Word; onClose: () => void }) {
+  const extra = useExtra(word.id)
+  const showReading = useStore().settings.showExampleReading
+  const groups = ([1, 2, 3] as const).map((level) => ({ level, items: (extra?.examples ?? []).filter((e) => (e.level ?? 1) === level) }))
+  return (
+    <Modal title={`Exempel: ${word.word}`} onClose={onClose}>
+      {!extra ? (
+        <p className="muted">Läser in …</p>
+      ) : (
+        <div className="examples-list">
+          {groups.map(({ level, items }) =>
+            items.length ? (
+              <section key={level}>
+                <h4>{LEVEL_LABEL[level]} ({items.length})</h4>
+                {items.map((ex, i) => (
+                  <div className="wc-example" key={i}>
+                    <div className="wc-ex-ja">
+                      <FuriText ja={ex.ja} reading={ex.reading} show={showReading} word={word} />
+                      <SpeakButton text={ex.ja} small />
+                    </div>
+                    <div>{ex.sv}</div>
+                  </div>
+                ))}
+              </section>
+            ) : null,
+          )}
+          {extra.forms.length > 0 && (
+            <section>
+              <h4>Böjningar ({extra.forms.length})</h4>
+              {extra.forms.map((f, i) => (
+                <div className="wc-example" key={i}>
+                  <div className="form-head"><span className="pos">{f.label}</span> <Ja className="strong">{f.ja}</Ja> <Ja className="muted">{f.reading}</Ja></div>
+                  <div className="wc-ex-ja">
+                    <FuriText ja={f.ex.ja} reading={f.ex.reading} show={showReading} />
+                    <SpeakButton text={f.ex.ja} small />
+                  </div>
+                  <div>{f.ex.sv}</div>
+                </div>
+              ))}
+            </section>
+          )}
+        </div>
+      )}
     </Modal>
   )
 }

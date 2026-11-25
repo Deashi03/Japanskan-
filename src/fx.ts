@@ -41,18 +41,54 @@ function build(): Engine {
   const nd = noise.getChannelData(0)
   for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1
 
-  // Mobiler stänger av ljudutgången efter en stunds tystnad, och nästa ljud kommer då
-  // märkbart för sent – efter animationen det hör till. Ett ohörbart svagt brus håller
-  // utgången vaken så länge appen syns.
-  const keep = ctx.createBufferSource()
-  keep.buffer = noise
-  keep.loop = true
-  const keepGain = ctx.createGain()
-  keepGain.gain.value = 0.0002
-  keep.connect(keepGain).connect(ctx.destination)
-  keep.start()
-
   return { ctx, out: master, wet, noise }
+}
+
+// Mobiler stänger av ljudutgången efter en stunds tystnad, och nästa ljud kommer då för
+// sent – efter animationen det hör till. Under ett pass spelas därför en helt tyst signal
+// (bara nollor, inget brus) som håller utgången vaken. Utanför pass stängs ljudet av helt.
+let keepAlive: AudioBufferSourceNode | null = null
+let sessionActive = false
+let sleepTimer: ReturnType<typeof setTimeout> | undefined
+
+function startKeepAlive() {
+  if (!engine || keepAlive) return
+  const src = engine.ctx.createBufferSource()
+  src.buffer = engine.ctx.createBuffer(1, engine.ctx.sampleRate, engine.ctx.sampleRate)
+  src.loop = true
+  src.connect(engine.ctx.destination)
+  src.start()
+  keepAlive = src
+}
+
+function stopKeepAlive() {
+  try {
+    keepAlive?.stop()
+  } catch {
+    /* redan stoppad */
+  }
+  keepAlive?.disconnect()
+  keepAlive = null
+}
+
+/** Ett pass börjar: ljudet hålls redo så att effekterna kommer i takt med animationerna. */
+export function audioSessionStart() {
+  sessionActive = true
+  clearTimeout(sleepTimer)
+  if (engine) startKeepAlive()
+}
+
+/** Ett pass är slut: när sista ljudet klingat ut (`afterMs`) stängs ljudmotorn av helt. */
+export function audioSessionEnd(afterMs = 0) {
+  sessionActive = false
+  clearTimeout(sleepTimer)
+  sleepTimer = setTimeout(() => {
+    if (sessionActive) return
+    stopKeepAlive()
+    if (engine?.ctx.state === 'running') void engine.ctx.suspend()
+    const session = (navigator as unknown as { audioSession?: { type: string } }).audioSession
+    if (session) session.type = 'auto'
+  }, afterMs)
 }
 
 /** iPhone spelar bara upp ljud som startats av en tryckning, och tystar webbljud när
@@ -71,6 +107,12 @@ function unlock() {
       src.buffer = ctx.createBuffer(1, 1, 22050)
       src.connect(ctx.destination)
       src.start(0)
+    }
+    if (sessionActive) startKeepAlive()
+    else {
+      // Utanför pass: väck ljudet för ett enstaka ljud och stäng av igen strax efteråt.
+      clearTimeout(sleepTimer)
+      sleepTimer = setTimeout(() => !sessionActive && engine?.ctx.state === 'running' && void engine.ctx.suspend(), 4000)
     }
     syncLag()
   } catch {
@@ -403,31 +445,38 @@ function utter(text: string): SpeechSynthesisUtterance {
 }
 
 /** Läser upp en japansk text. Avbryter det som eventuellt redan läses. */
-export function speak(text: string) {
-  speakAll([text])
+export function speak(text: string, onDone?: () => void) {
+  speakAll([text], 0, 0, onDone)
 }
 
 /** Läser upp flera texter i följd med en paus emellan. Nästa text startar först när den
  *  förra har lästs klart och pausen har gått; en ny uppläsning eller `stopSpeaking`
  *  avbryter resten. */
-export function speakAll(texts: string[], gapMs = 1500, delayMs = 0) {
-  if (!canSpeak) return
+export function speakAll(texts: string[], gapMs = 1500, delayMs = 0, onDone?: () => void) {
+  const queue = texts.filter(Boolean)
+  if (!canSpeak || !queue.length) {
+    onDone?.()
+    return
+  }
   const run = ++speechRun
   speechSynthesis.cancel()
-  const queue = texts.filter(Boolean)
   const next = (i: number) => {
-    if (run !== speechRun || i >= queue.length) return
+    if (run !== speechRun) return
+    if (i >= queue.length) return onDone?.()
     const u = utter(queue[i])
-    if (i + 1 < queue.length) {
-      let done = false
-      const after = () => {
-        if (done) return
-        done = true
-        setTimeout(() => next(i + 1), gapMs)
-      }
-      u.onend = after
-      u.onerror = after
+    let done = false
+    const after = () => {
+      if (done) return
+      done = true
+      clearTimeout(guard)
+      if (i + 1 < queue.length) setTimeout(() => next(i + 1), gapMs)
+      else next(i + 1)
     }
+    u.onend = after
+    u.onerror = after
+    // Om rösten aldrig meddelar att den är klar (händer på vissa enheter) går vi vidare
+    // efter ungefär den tid meningen borde ta att läsa.
+    const guard = setTimeout(after, 1500 + [...queue[i]].length * 260)
     speechSynthesis.speak(u)
   }
   if (delayMs > 0) setTimeout(() => next(0), delayMs)

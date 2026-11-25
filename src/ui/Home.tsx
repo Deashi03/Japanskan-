@@ -4,6 +4,8 @@ import { computeStats } from '../stats'
 import { useStore } from '../store'
 import { fx } from '../fx'
 import { applyUpdate, useUpdateReady } from '../update'
+import { setNoListen, useNoListen } from '../prefs'
+import { QuickSettings } from './QuickSettings'
 import { Icon } from './bits'
 
 export function Home({ onStart, onImport }: { onStart: (minutes: number) => void; onImport: () => void }) {
@@ -14,9 +16,12 @@ export function Home({ onStart, onImport }: { onStart: (minutes: number) => void
   const stats = useMemo(() => computeStats(snap, now), [snap])
   const empty = snap.words.size === 0
   const updateReady = useUpdateReady()
+  const noListen = useNoListen()
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   return (
     <div className="page home">
+      {settingsOpen && <QuickSettings onClose={() => setSettingsOpen(false)} />}
       {updateReady && (
         <div className="update-banner">
           <span>En ny version av appen finns.</span>
@@ -28,6 +33,7 @@ export function Home({ onStart, onImport }: { onStart: (minutes: number) => void
           <h1>こんにちは</h1>
           <p className="muted">{empty ? 'Lägg till dina första ord för att börja.' : stats.doneToday ? 'Du har redan övat i dag. Snyggt!' : 'Dags för dagens pass?'}</p>
         </div>
+        <button className="icon-btn" onClick={() => setSettingsOpen(true)} aria-label="Inställningar"><Icon name="gear" /></button>
         <div className={'streak' + (stats.doneToday ? ' lit' : '')} title={stats.doneToday ? 'Dagens pass är gjort' : 'Öva i dag för att hålla streaken vid liv'}>
           <Icon name="flame" size={26} />
           <strong>{stats.current}</strong>
@@ -67,6 +73,10 @@ export function Home({ onStart, onImport }: { onStart: (minutes: number) => void
               ))}
             </div>
             <button className="btn primary big" onClick={() => onStart(minutes)}>Starta</button>
+            <label className="setting compact">
+              <span>Kan inte lyssna nu<small>Lyssningsövningar byts mot skrivövningar tills du stänger appen.</small></span>
+              <input type="checkbox" className="switch" checked={noListen} onChange={(e) => setNoListen(e.target.checked)} />
+            </label>
             {counts.due + counts.newNow === 0 && (
               <p className="muted small center">Inget är schemalagt just nu – passet blir extra övning som inte påverkar schemat.</p>
             )}

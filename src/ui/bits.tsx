@@ -1,5 +1,5 @@
 import { useMemo, type CSSProperties, type ReactNode } from 'react'
-import { furigana, type Seg } from '../furigana'
+import { furigana, setReadingDict, type Seg } from '../furigana'
 import { canSpeak, speak } from '../fx'
 import { useStore } from '../store'
 import type { Word } from '../types'
@@ -16,6 +16,8 @@ const PATHS: Record<string, string> = {
   undo: 'M8 5 3.5 9.5 8 14M4 9.5h10a5.5 5.5 0 0 1 0 11h-3',
   check: 'M5 12.5l4.5 4.5L19 7.5',
   pause: 'M8 5v14M16 5v14',
+  tag: 'M3.5 12.5 11 5h8v8l-7.5 7.5a1.5 1.5 0 0 1-2 0l-6-6a1.5 1.5 0 0 1 0-2ZM15 9h.01',
+  book: 'M5 4.5h9a3 3 0 0 1 3 3V20H8a3 3 0 0 1-3-3V4.5ZM5 17a3 3 0 0 1 3-3h9',
   flame: 'M12 3c1 3.5 5 5.5 5 10.5a5 5 0 0 1-10 0c0-2 1-3.2 2-4 .2 1.6 1 2.4 1.8 2.6C10 9.500 10.500 6 12 3Z',
 }
 
@@ -53,14 +55,29 @@ export function SpeakButton({ text, small }: { text: string; small?: boolean }) 
   )
 }
 
+/** Bygger om tabellen med kanjiläsningar när orden ändras, och returnerar ett versionsnummer
+ *  så att furigana räknas om. */
+let dictFor = -1
+let dictSize = -1
+function useDictVersion(): number {
+  const snap = useStore()
+  if (snap.words.size !== dictSize || dictFor < 0) {
+    dictSize = snap.words.size
+    dictFor = snap.version
+    setReadingDict([...snap.words.values()].flatMap((w) => w.breakdown))
+  }
+  return dictFor
+}
+
 const KANA_ONLY = /^[\u3040-\u30ffー・〜～\s]+$/
 
 /** Ordet med läsningen (furigana) ovanför. */
 export function Furi({ word, reading }: { word: string; reading: string }) {
+  const dictVersion = useDictVersion()
   const plain = KANA_ONLY.test(word) || !reading || reading === word
   // Läsningen läggs över varje kanjigrupp för sig (開[あ]ける i stället för hela ordet),
   // så att långa ord kan radbrytas och kana inte får kana över sig.
-  const segs = useMemo(() => (plain ? null : furigana(word, reading)), [plain, word, reading])
+  const segs = useMemo(() => (plain ? null : furigana(word, reading)), [plain, word, reading, dictVersion])
   // --len låter stilmallen krympa texten så att ordet får plats där det visas.
   const style = { '--len': Math.max(2, [...word].length) } as CSSProperties
   return (
@@ -76,11 +93,46 @@ export function Furi({ word, reading }: { word: string; reading: string }) {
   )
 }
 
+export const POS_LABEL: Record<string, string> = {
+  noun: 'Substantiv',
+  suru: 'Suru-verb',
+  ru: 'Ru-verb',
+  u: 'U-verb',
+  irregular: 'Oregelbundet verb',
+  'i-adj': 'I-adjektiv',
+  'na-adj': 'Na-adjektiv',
+  'no-adj': 'No-adjektiv',
+  adverb: 'Adverb',
+  pronoun: 'Pronomen',
+  counter: 'Räkneord',
+  prefix: 'Prefix',
+  suffix: 'Suffix',
+  particle: 'Partikel',
+  conjunction: 'Konjunktion',
+  interjection: 'Interjektion',
+  expression: 'Uttryck',
+  proverb: 'Ordspråk',
+  grammar: 'Grammatik',
+  slang: 'Slang',
+  name: 'Egennamn',
+}
+
+/** Ordklass som små etiketter, t.ex. "U-verb" eller "Substantiv · Suru-verb". */
+export function PosTags({ word }: { word: Word }) {
+  if (!word.pos?.length) return null
+  return (
+    <div className="pos-tags">
+      {word.pos.map((p) => <span className={'pos pos-' + p} key={p}>{POS_LABEL[p] ?? p}</span>)}
+    </div>
+  )
+}
+
 export function WordHead({ word }: { word: Word }) {
   return (
     <>
       <div className="wc-head">
         <div>
+          <PosTags word={word} />
           <div className="wc-reading"><Ja>{word.reading}</Ja></div>
           <div className="wc-word" style={{ '--len': Math.max(2, [...word.word].length) } as CSSProperties}><Ja>{word.word}</Ja></div>
         </div>
@@ -88,6 +140,26 @@ export function WordHead({ word }: { word: Word }) {
       </div>
       <p className="wc-meaning">{word.meaning}</p>
     </>
+  )
+}
+
+/** Grammatisk förklaring: formel, funktion, utförlig förklaring och vanliga fel. */
+export function WordGrammar({ word }: { word: Word }) {
+  const g = word.grammar
+  if (!g) return null
+  return (
+    <section className="grammar">
+      <h4>Grammatik</h4>
+      <div className="grammar-formula"><Ja>{g.formula}</Ja></div>
+      <p className="grammar-function">{g.function}</p>
+      <p>{g.explanation}</p>
+      {g.pitfalls && (
+        <p className="grammar-pitfalls">
+          <strong>Se upp: </strong>
+          {g.pitfalls}
+        </p>
+      )}
+    </section>
   )
 }
 
@@ -144,11 +216,12 @@ export function WordDistinctions({ word }: { word: Word }) {
 /** En mening med läsningen ovanför varje kanjigrupp. Går det inte att räkna ut
  *  visas läsningen på en egen rad under meningen. */
 export function FuriText({ ja, reading, show = true, word }: { ja: string; reading: string; show?: boolean; word?: Word }) {
+  const dictVersion = useDictVersion()
   const segs = useMemo(() => {
     if (!show) return null
     const at = word ? ja.indexOf(word.word) : -1
     return furigana(ja, reading, at >= 0 ? { at, len: word!.word.length, reading: word!.reading } : undefined)
-  }, [ja, reading, show, word])
+  }, [ja, reading, show, word, dictVersion])
   if (!show || !reading) return <Ja>{ja}</Ja>
   if (!segs)
     return (
@@ -173,6 +246,7 @@ export function WordCard({ word }: { word: Word }) {
   return (
     <div className="wordcard">
       <WordHead word={word} />
+      {word.grammar && <WordGrammar word={word} />}
       {word.breakdown.length > 0 && <WordBreakdown word={word} />}
       {word.examples.length > 0 && <WordExamples word={word} />}
       {word.distinctions.length > 0 && <WordDistinctions word={word} />}

@@ -1,13 +1,28 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { canSpeak, celebrate, FINALE_AT, fx, HIT_TIMES, prepareHarp, speak, speakAll, stopSpeaking } from '../fx'
-import { afterIntro, buildExercise, buildQueue, extraQueue, nextFresh, overtimeQueue, requeue, shuffle, type Exercise, type QItem } from '../session'
-import { autoRating, exercisesFor, formatDue, knownCard, newCard, pickExercise, schedule, State } from '../srs'
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import { audioSessionEnd, audioSessionStart, canSpeak, celebrate, FINALE_AT, fx, HIT_TIMES, prepareHarp, speak, speakAll, stopSpeaking } from '../fx'
+import { getNoListen, useNoListen } from '../prefs'
+import {
+  afterIntro,
+  buildExercise,
+  buildQueue,
+  extraQueue,
+  nextFresh,
+  overtimeQueue,
+  remainingReviews,
+  requeue,
+  shuffle,
+  type Answered,
+  type Exercise,
+  type QItem,
+} from '../session'
+import { autoRating, clearRetry, exercisesFor, formatDue, isDue, knownCard, newCard, pickExercise, schedule, State, withRetry } from '../srs'
 import { computeStats } from '../stats'
-import { actions, getSnap, uid } from '../store'
+import { actions, getExtra, getSnap, loadExtras, uid } from '../store'
 import { syncNow } from '../sync'
 import type { CardData, Example, LogData, Word } from '../types'
-import { FuriText, Icon, Ja, SpeakButton, WordBreakdown, WordDistinctions, WordExamples, WordHead } from './bits'
+import { FuriText, Icon, Ja, SpeakButton, WordBreakdown, WordDistinctions, WordExamples, WordGrammar, WordHead } from './bits'
 import { Cloze, Matching, MultipleChoice, Sentence, Typing, type Result } from './Exercises'
+import { QuickSettings } from './QuickSettings'
 
 const PRAISE = ['Rätt!', 'Snyggt!', 'Precis!', 'Bra jobbat!', 'いいね！', 'Perfekt!', 'すごい！']
 
@@ -18,18 +33,25 @@ interface Feedback {
   words: Word[]
   nextDue?: number
   canOverride?: boolean
-  /** Exempelmening som visas och läses upp efter ett rätt svar. */
+  /** Exempelmening som visas efter ett rätt svar. */
   example?: { word: Word; ex: Example }
   /** Svar som just sparats som godkänd synonym via "Jag hade rätt". */
   learned?: string
+  /** Ett fel ger ett omprov i slutet av passet och de närmaste dagarna. */
+  retryNote?: boolean
 }
-type IntroPart = 'breakdown' | 'examples' | 'distinctions'
+type IntroPart = 'grammar' | 'breakdown' | 'examples' | 'distinctions'
 const introParts = (w: Word): IntroPart[] => [
+  ...(w.grammar ? ['grammar' as const] : []),
   ...(w.breakdown.length ? ['breakdown' as const] : []),
   ...(w.examples.length ? ['examples' as const] : []),
   ...(w.distinctions.length ? ['distinctions' as const] : []),
 ]
 interface Undo { queue: QItem[]; cards: [string, CardData][]; logIds: string[]; tally: Tally }
+
+/** normal = vanligt pass · extra = extra övning · overtime = tiden är ute, nya ord görs klart ·
+ *  asking = frågar om man vill fortsätta repetera · bonus = fortsätter med dagens repetitioner */
+type Mode = 'normal' | 'extra' | 'overtime' | 'asking' | 'bonus'
 
 type Turn =
   | { kind: 'intro'; item: QItem; word: Word }
@@ -45,25 +67,83 @@ function makeTurn(queue: QItem[]): Turn {
   if (!word || word.suspended) return { kind: 'skip', item }
   if (item.kind === 'intro') return { kind: 'intro', item, word }
   const card = snap.cards.get(word.id) ?? newCard(Date.now())
-  const type = item.extra ? shuffle(exercisesFor(word, card))[0] : pickExercise(word, card)
+  const extra = getExtra(word.id)
+  const noListen = getNoListen() || !canSpeak
+  const type =
+    item.force ?? (item.extra ? shuffle(exercisesFor(word, card, { noListen }))[0] : pickExercise(word, card, { noListen, hasForms: !!extra?.forms.length }))
   // Para ihop-övningen tar med fler ord ur kön som också håller på att läras in.
   const partnerItems =
     type === 'match'
-      ? queue.slice(1).filter((q, i, arr) => {
-          const c = snap.cards.get(q.wordId)
-          const w = snap.words.get(q.wordId)
-          return q.kind === 'quiz' && !!q.extra === !!item.extra && w && !w.suspended && q.wordId !== item.wordId
-            && arr.findIndex((o) => o.wordId === q.wordId) === i && (item.extra || (c && c.state === State.Learning && pickExercise(w, c) === 'match'))
-        }).slice(0, 3)
+      ? queue
+          .slice(1)
+          .filter((q, i, arr) => {
+            const c = snap.cards.get(q.wordId)
+            const w = snap.words.get(q.wordId)
+            return (
+              q.kind === 'quiz' && !q.force && !!q.extra === !!item.extra && w && !w.suspended && q.wordId !== item.wordId &&
+              arr.findIndex((o) => o.wordId === q.wordId) === i && (item.extra || (c && c.state === State.Learning && pickExercise(w, c) === 'match'))
+            )
+          })
+          .slice(0, 3)
       : []
-  const all = [...snap.words.values()]
-  const exercise = buildExercise(type, word, all, {
+  const exercise = buildExercise(type, word, [...snap.words.values()], {
     partners: partnerItems.map((q) => snap.words.get(q.wordId)!),
     known: new Set(snap.cards.keys()),
-    canListen: canSpeak,
+    canListen: !noListen,
+    extra,
   })
   const items = exercise.type === 'match' ? [item, ...partnerItems.filter((q) => exercise.graded.includes(q.wordId))] : [item]
   return { kind: 'quiz', item, exercise, items }
+}
+
+/** Håller passet inom den synliga delen av skärmen när tangentbordet är uppe. iPhone
+ *  krymper inte sidan för tangentbordet utan skjuter upp den – då försvinner frågan. */
+function useViewportFit(ref: RefObject<HTMLDivElement | null>) {
+  useEffect(() => {
+    const vv = window.visualViewport
+    const el = ref.current
+    if (!vv || !el) return
+    const fit = () => {
+      el.style.height = `${vv.height}px`
+      el.style.transform = `translateY(${vv.offsetTop}px)`
+      el.classList.toggle('kb', vv.height < window.innerHeight - 120)
+    }
+    const keepTop = () => window.scrollTo(0, 0)
+    fit()
+    vv.addEventListener('resize', fit)
+    vv.addEventListener('scroll', fit)
+    window.addEventListener('scroll', keepTop)
+    return () => {
+      vv.removeEventListener('resize', fit)
+      vv.removeEventListener('scroll', fit)
+      window.removeEventListener('scroll', keepTop)
+      el.style.height = ''
+      el.style.transform = ''
+    }
+  }, [ref])
+}
+
+/** Klocka och tidslinje. Ritar om sig själv fyra gånger i sekunden utan att resten av
+ *  passet behöver ritas om (det var en källa till lagg). */
+function SessionClock({ elapsedRef, total, overtime, combo, answered }: { elapsedRef: RefObject<number>; total: number; overtime: boolean; combo: number; answered: number }) {
+  const [, tick] = useState(0)
+  useEffect(() => {
+    const t = setInterval(() => tick((n) => n + 1), 250)
+    return () => clearInterval(t)
+  }, [])
+  const elapsed = elapsedRef.current ?? 0
+  const mmss = (ms: number) => `${Math.floor(ms / 60_000)}:${String(Math.floor((ms % 60_000) / 1000)).padStart(2, '0')}`
+  const pct = Math.min(100, (elapsed / total) * 100)
+  return (
+    <>
+      <div className="progress" role="progressbar" aria-label="Tid" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100}>
+        <div className="progress-fill" style={{ transform: `scaleX(${pct / 100})` }}>
+          {combo > 0 && <i className="shine" key={answered} />}
+        </div>
+      </div>
+      <span className="clock">{overtime ? '+' + mmss(Math.max(0, elapsed - total)) : mmss(Math.max(0, total - elapsed))}</span>
+    </>
+  )
 }
 
 export function Session({ minutes, onExit }: { minutes: number; onExit: () => void }) {
@@ -72,55 +152,67 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
   const [turnNo, setTurnNo] = useState(0)
   const [attempt, setAttempt] = useState(0)
   const [phase, setPhase] = useState<'question' | 'feedback' | 'summary'>('question')
-  const [elapsed, setElapsed] = useState(0)
   const [tally, setTally] = useState<Tally>({ answered: 0, correct: 0, newWords: 0, combo: 0, bestCombo: 0 })
   const [feedback, setFeedback] = useState<Feedback | null>(null)
-  const [extraMode, setExtraMode] = useState(false)
+  const [mode, setMode] = useState<Mode>('normal')
+  const [held, setHeld] = useState<QItem[]>([])
   const [introStep, setIntroStep] = useState(0)
   const [known, setKnown] = useState(0)
-  const [overtime, setOvertime] = useState(false)
   const [paused, setPaused] = useState(false)
-  const pausedRef = useRef(false)
-  pausedRef.current = paused
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [toast, setToast] = useState<{ id: number; text: string } | null>(null)
+  const noListen = useNoListen()
+  const pausedRef = useRef(false)
+  pausedRef.current = paused || settingsOpen
   const undo = useRef<Undo | null>(null)
   const lastAnswer = useRef<{ results: Result[]; ms: number } | null>(null)
   const elapsedRef = useRef(0)
+  const rootRef = useRef<HTMLDivElement>(null)
+  useViewportFit(rootRef)
+
+  // Exempelmeningar och böjningar läses in för orden i kön, några i taget i förväg.
+  const [extrasReady, setExtrasReady] = useState(0)
+  useEffect(() => {
+    const ids = queue.slice(0, 12).map((q) => q.wordId)
+    if (ids.some((id) => getSnap().words.get(id)?.extraCount && !getExtra(id))) void loadExtras(ids).then(() => setExtrasReady((n) => n + 1))
+  }, [queue])
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const turn = useMemo(() => makeTurn(queue), [turnNo])
+  const turn = useMemo(() => makeTurn(queue), [turnNo, noListen])
 
-  // Klockan går bara när appen syns.
+  // Klockan går bara när appen syns och passet inte är pausat. Den uppdaterar bara ett
+  // värde; själva visningen sköts av SessionClock.
   useEffect(() => {
     if (phase === 'summary') return
     let last = performance.now()
     const t = setInterval(() => {
       const now = performance.now()
-      if (document.visibilityState === 'visible' && !pausedRef.current) {
-        elapsedRef.current += Math.min(now - last, 1000)
-        setElapsed(elapsedRef.current)
-      }
+      if (document.visibilityState === 'visible' && !pausedRef.current) elapsedRef.current += Math.min(now - last, 1000)
       last = now
     }, 250)
     return () => clearInterval(t)
   }, [phase])
+
+  // Ljudet hålls redo under passet och stängs av helt efteråt.
+  useEffect(() => {
+    audioSessionStart()
+    const t = setTimeout(prepareHarp, 3000)
+    return () => {
+      clearTimeout(t)
+      audioSessionEnd()
+    }
+  }, [])
 
   const finish = () => {
     stopSpeaking()
     if (tally.answered === 0 && tally.newWords === 0 && known === 0) return onExit()
     setPhase('summary')
     celebrate()
+    audioSessionEnd(7000)
     void syncNow()
   }
 
-  const advance = (nextQueue: QItem[]) => {
-    if (elapsedRef.current >= total) {
-      // Tiden är ute. Ord som redan håller på att läras in får sina sista frågor,
-      // så att inget nytt ord lämnas halvfärdigt; allt annat väntar till nästa pass.
-      nextQueue = overtimeQueue(nextQueue)
-      if (!nextQueue.length) return finish()
-      setOvertime(true)
-    }
+  const goTo = (nextQueue: QItem[]) => {
     setQueue(nextQueue)
     stopSpeaking()
     setFeedback(null)
@@ -130,32 +222,45 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
     fx.whoosh()
   }
 
-  // Harpans toner räknas ut i bakgrunden medan passet pågår, så att avslutningen startar direkt.
+  const advance = (nextQueue: QItem[]) => {
+    if (elapsedRef.current >= total && (mode === 'normal' || mode === 'extra')) {
+      // Tiden är ute. Påbörjade nya ord och dagens omprov görs klart först; sedan får man
+      // välja om man vill fortsätta med de repetitioner som är kvar för i dag.
+      const rest = mode === 'extra' ? [] : remainingReviews(nextQueue)
+      const finishUp = mode === 'extra' ? [] : overtimeQueue(nextQueue)
+      setHeld(rest)
+      if (finishUp.length) {
+        setMode('overtime')
+        return goTo(finishUp)
+      }
+      if (rest.length) return setMode('asking')
+      return finish()
+    }
+    goTo(nextQueue)
+  }
+
+  // Tom kö: fyll på med extra övning, fråga om att fortsätta, eller avsluta.
   useEffect(() => {
-    const t = setTimeout(prepareHarp, 3000)
-    return () => clearTimeout(t)
-  }, [])
+    if (phase !== 'question' || mode === 'asking') return
+    if (turn?.kind === 'skip') return advance(queue.filter((q) => q !== turn.item))
+    if (turn === null) {
+      if (mode === 'overtime') return held.length ? setMode('asking') : finish()
+      if (mode === 'bonus') return finish()
+      const extra = extraQueue(getSnap())
+      if (!extra.length) return finish()
+      setMode('extra')
+      advance(extra)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [turn, phase, mode])
 
   // Ett nytt ord presenteras: liten fanfar och uppläsning av ordet.
   useEffect(() => {
     if (turn?.kind !== 'intro') return
     fx.newWord()
-    if (getSnap().settings.autoSpeak) speak(turn.word.word)
+    if (getSnap().settings.autoSpeak && !getNoListen()) speak(turn.word.word)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [turnNo])
-
-  // Tom kö: fyll på med extra övning, eller avsluta om det inte finns något att öva på.
-  useEffect(() => {
-    if (phase !== 'question') return
-    if (turn?.kind === 'skip') return advance(queue.filter((q) => q !== turn.item))
-    if (turn === null) {
-      const extra = overtime ? [] : extraQueue(getSnap())
-      if (!extra.length) return finish()
-      setExtraMode(true)
-      advance(extra)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [turn, phase])
 
   async function introDone() {
     if (turn?.kind !== 'intro') return
@@ -163,9 +268,9 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
     const parts = introParts(turn.word)
     if (introStep < parts.length) {
       fx.reveal()
-      // Exempelmeningarna läses upp när de visas. Det sker här, i själva knapptryckningen,
-      // eftersom iPhone bara tillåter uppläsning som startas av en tryckning.
-      if (parts[introStep] === 'examples' && getSnap().settings.autoSpeak) speakAll(turn.word.examples.map((e) => e.ja), 1500)
+      // De två enkla exempelmeningarna läses upp när de visas. Det sker här, i själva
+      // knapptryckningen, eftersom iPhone bara tillåter uppläsning som startas av en tryckning.
+      if (parts[introStep] === 'examples' && getSnap().settings.autoSpeak && !getNoListen()) speakAll(turn.word.examples.slice(0, 2).map((e) => e.ja), 1500)
       else stopSpeaking()
       return setIntroStep(introStep + 1)
     }
@@ -200,7 +305,7 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
     const cardOps: [string, CardData][] = []
     const logOps: [string, LogData][] = []
     const prevCards: [string, CardData][] = []
-    const re: { item: QItem; correct: boolean; stillLearning: boolean }[] = []
+    const answered: Answered[] = []
     let nextDue: number | undefined
     for (const r of results) {
       const item = turn.items.find((q) => q.wordId === r.wordId)
@@ -210,20 +315,31 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
       const log: LogData = { wordId: r.wordId, ts: now, rating, correct: r.correct, exercise: type, ms: Math.round(ms) }
       if (item.extra) {
         log.extra = true
-        re.push({ item, correct: r.correct, stillLearning: false })
-      } else {
-        const next = schedule(card, rating, now, type)
-        if (card.reps === 0) log.isNew = true
+        log.review = false
+        answered.push({ item, correct: r.correct, stillLearning: false, type })
+        logOps.push([uid(), log])
+        continue
+      }
+      // Svaret påverkar schemat om ordet håller på att läras in eller ska repeteras i dag.
+      // Ett omprov för ett ord som inte ska repeteras i dag ändrar bara schemat vid fel.
+      const graded = card.state !== State.Review || isDue(card, now) || !r.correct
+      let next = graded ? schedule(card, rating, now, type) : card
+      if (!r.correct) next = withRetry(next, type, now)
+      else if (item.retry) next = clearRetry(next, type, now)
+      if (item.retry) log.retry = true
+      if (card.reps === 0) log.isNew = true
+      log.review = card.state === State.Review || card.state === State.Relearning
+      if (next !== card) {
         prevCards.push([r.wordId, card])
         cardOps.push([r.wordId, next])
-        re.push({ item, correct: r.correct, stillLearning: next.state !== State.Review && next.due - now < 30 * 60_000 })
-        if (results.length === 1) nextDue = next.due
       }
+      answered.push({ item, correct: r.correct, stillLearning: !!item.learning && next.state !== State.Review, type })
+      if (results.length === 1 && graded && r.correct) nextDue = next.due
       logOps.push([uid(), log])
     }
     undo.current = { queue, cards: prevCards, logIds: logOps.map(([id]) => id), tally }
     void actions.apply({ cards: cardOps, logs: logOps })
-    setQueue(requeue(queue, re))
+    setQueue(requeue(queue, answered))
 
     const wrong = results.filter((r) => !r.correct)
     const allCorrect = wrong.length === 0
@@ -240,12 +356,14 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
     })
     const words = (allCorrect ? results : wrong).map((r) => snap.words.get(r.wordId)!).filter(Boolean)
     // Efter ett rätt svar visas en exempelmening, så att ordet syns i sitt sammanhang
-    // (den läses bara upp om man trycker på högtalaren). Inte i dra-övningen (flera ord) eller när meningen redan var frågan.
+    // (den läses bara upp om man trycker på högtalaren).
     const ex = turn.exercise
     let example: Feedback['example']
-    if (allCorrect && results.length === 1 && ex.type !== 'match' && ex.type !== 'sentence' && ex.word.examples.length) {
-      const pick = ex.type === 'cloze' ? ex.example : ex.word.examples[Math.floor(Math.random() * ex.word.examples.length)]
-      example = { word: ex.word, ex: pick }
+    if (allCorrect && results.length === 1 && ex.type !== 'match' && ex.type !== 'sentence' && ex.type !== 'form') {
+      const bank = getExtra(ex.word.id)?.examples.filter((e) => (e.level ?? 1) <= 2) ?? []
+      const pool = bank.length ? bank : ex.word.examples
+      const pick = ex.type === 'cloze' ? ex.example : pool[Math.floor(Math.random() * pool.length)]
+      if (pick) example = { word: ex.word, ex: pick }
     }
     setFeedback({
       learned,
@@ -255,6 +373,7 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
       words: type === 'match' && allCorrect ? [] : words,
       nextDue: allCorrect ? nextDue : undefined,
       canOverride: !allCorrect && (type === 'type_sv' || type === 'type_from_sv'),
+      retryNote: !allCorrect && !turn.item.extra,
     })
     setPhase('feedback')
   }
@@ -271,28 +390,28 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
     setAttempt((a) => a + 1)
   }
 
-  /** "Jag hade rätt": det svenska svaret betydde samma sak fast med andra ord. */
+  /** "Jag hade rätt": svaret betydde samma sak fast med andra ord. */
   function overrideCorrect() {
     const u = undo.current
     const last = lastAnswer.current
     if (!u || !last) return
     undo.current = null
     void actions.apply({ cards: u.cards, logs: u.logIds.map((id) => [id, null]) })
-    // Svaret sparas som synonym, så att det godkänns direkt nästa gång.
+    // Svaret sparas så att det godkänns direkt nästa gång: ett svenskt svar bland
+    // synonymerna, ett japanskt bland de japanska alternativen.
     const { wordId, answer } = last.results[0]
     const word = getSnap().words.get(wordId)
-    // Ett svenskt svar sparas bland synonymerna, ett japanskt bland de japanska alternativen.
     const field = turn?.kind === 'quiz' && turn.exercise.type === 'type_from_sv' ? 'altJa' : 'synonyms'
     const have = word?.[field] ?? []
-    const learned = answer && word && !have.some((x) => x.toLowerCase() === answer.toLowerCase()) ? answer : undefined
-    if (learned && word) void actions.saveWords([{ ...word, [field]: [...have, learned] }])
-    onResult(last.results.map((r) => ({ ...r, correct: true })), last.ms, { queue: u.queue, tally: u.tally }, learned)
+    const saved = answer && word && !have.some((x) => x.toLowerCase() === answer.toLowerCase()) ? answer : undefined
+    if (saved && word) void actions.saveWords([{ ...word, [field]: [...have, saved] }])
+    onResult(last.results.map((r) => ({ ...r, correct: true })), last.ms, { queue: u.queue, tally: u.tally }, saved)
   }
 
   // Enter = fortsätt.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Enter' || e.repeat || paused) return
+      if (e.key !== 'Enter' || e.repeat || paused || settingsOpen) return
       if (phase === 'feedback') {
         e.preventDefault()
         advance(queue)
@@ -302,33 +421,31 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
     return () => window.removeEventListener('keydown', onKey)
   })
 
-  if (phase === 'summary') return <Summary tally={tally} known={known} elapsed={elapsed} onExit={onExit} />
+  if (phase === 'summary') return <Summary tally={tally} known={known} elapsed={elapsedRef.current} onExit={onExit} />
 
-  const left = Math.max(0, total - elapsed)
-  const mmss = (ms: number) => `${Math.floor(ms / 60_000)}:${String(Math.floor((ms % 60_000) / 1000)).padStart(2, '0')}`
-  const clock = mmss(left)
-  const overClock = mmss(Math.max(0, elapsed - total))
+  const overtime = mode === 'overtime' || mode === 'asking' || mode === 'bonus'
+  void extrasReady
 
   return (
-    <div className="session">
+    <div className="session" ref={rootRef}>
       <header className="session-top">
         <button className="icon-btn" onClick={finish} aria-label="Avsluta passet">
           <Icon name="close" />
         </button>
-        <div className="progress" role="progressbar" aria-label="Tid" aria-valuenow={Math.round((elapsed / total) * 100)} aria-valuemin={0} aria-valuemax={100}>
-          <div className="progress-fill" style={{ width: `${Math.min(100, (elapsed / total) * 100)}%` }}>
-            {tally.combo > 0 && <i className="shine" key={tally.answered} />}
-          </div>
-        </div>
-        <span className="clock">{overtime ? '+' + overClock : clock}</span>
+        <SessionClock elapsedRef={elapsedRef} total={total} overtime={overtime} combo={tally.combo} answered={tally.answered} />
+        <button className="icon-btn pause-btn" onClick={() => setSettingsOpen(true)} aria-label="Inställningar">
+          <Icon name="gear" size={20} />
+        </button>
         <button className="icon-btn pause-btn" onClick={() => { stopSpeaking(); setPaused(true) }} aria-label="Pausa passet">
           <Icon name="pause" />
         </button>
         <div className="combo-row">
+          {noListen && <span className="no-listen-chip">Utan lyssning</span>}
           {tally.combo >= 2 && <span className="combo" key={tally.combo}><Icon name="flame" size={14} /> {tally.combo} i rad</span>}
         </div>
       </header>
 
+      {settingsOpen && <QuickSettings onClose={() => setSettingsOpen(false)} />}
       {paused && (
         <div className="pause-screen" role="dialog" aria-modal="true" aria-label="Pausat">
           <div className="pause-card">
@@ -340,10 +457,25 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
           </div>
         </div>
       )}
+      {mode === 'asking' && (
+        <div className="pause-screen" role="dialog" aria-modal="true" aria-label="Tiden är ute">
+          <div className="pause-card">
+            <Icon name="check" size={40} />
+            <h2>Tiden är ute</h2>
+            <p className="muted">
+              Du har {held.length} {held.length === 1 ? 'ord' : 'ord'} kvar att repetera i dag. Vill du fortsätta? Du kan sluta när du vill – de ord du hinner med räknas som repeterade.
+            </p>
+            <button className="btn primary big" autoFocus onClick={() => { setMode('bonus'); goTo(held) }}>Fortsätt repetera</button>
+            <button className="btn ghost" onClick={finish}>Avsluta passet</button>
+          </div>
+        </div>
+      )}
       {toast && <div className="toast" key={toast.id} onAnimationEnd={() => setToast(null)}><Icon name="flame" size={28} /> {toast.text}</div>}
       <div className={'session-body' + (phase === 'feedback' && feedback && !feedback.correct ? ' nudge' : '')}>
-        {extraMode && !overtime && <div className="notice slim">Extra övning – påverkar inte schemat</div>}
-        {overtime && <div className="notice slim">Tiden är ute – vi gör klart de nya orden ({queue.length} {queue.length === 1 ? 'fråga' : 'frågor'} kvar)</div>}
+        {mode === 'extra' && <div className="notice slim">Extra övning – påverkar inte schemat</div>}
+        {mode === 'overtime' && <div className="notice slim">Tiden är ute – vi gör klart de påbörjade orden ({queue.length} {queue.length === 1 ? 'fråga' : 'frågor'} kvar)</div>}
+        {mode === 'bonus' && <div className="notice slim">Dagens repetitioner – {remainingReviews(queue).length} kvar</div>}
+        {turn?.kind === 'quiz' && turn.item.retry && !turn.item.extra && <div className="notice slim retry">Omprov – den här övningen blev fel förra gången</div>}
         {turn?.kind === 'intro' && (() => {
           const parts = introParts(turn.word)
           const part = parts[introStep - 1]
@@ -358,6 +490,7 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
               <div className="wordcard">
                 <WordHead word={turn.word} />
                 <div className="pop-in" key={introStep}>
+                  {part === 'grammar' && <WordGrammar word={turn.word} />}
                   {part === 'breakdown' && <WordBreakdown word={turn.word} />}
                   {part === 'examples' && <WordExamples word={turn.word} />}
                   {part === 'distinctions' && <WordDistinctions word={turn.word} />}
@@ -371,7 +504,7 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
             {(() => {
               const ex = turn.exercise
               if (ex.type === 'match') return <Matching ex={ex} onDone={onResult} />
-              if (ex.type === 'sentence') return <Sentence ex={ex} onDone={onResult} />
+              if (ex.type === 'sentence' || ex.type === 'form') return <Sentence ex={ex} onDone={onResult} />
               if (ex.type === 'cloze') return <Cloze ex={ex} onDone={onResult} />
               if (ex.type === 'type_sv' || ex.type === 'type_from_sv') return <Typing ex={ex as Extract<Exercise, { type: 'type_sv' | 'type_from_sv' }>} onDone={onResult} />
               return <MultipleChoice ex={ex as Extract<Exercise, { type: 'mc_ja_sv' | 'mc_sv_ja' | 'listen' }>} onDone={onResult} />
@@ -415,6 +548,7 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
             </div>
           )}
           {feedback.learned && <div className="sheet-note">”{feedback.learned}” är sparat som godkänt svar.</div>}
+          {feedback.retryNote && <div className="sheet-note">Övningen kommer igen i slutet av passet, i morgon och en gång till de närmaste dagarna.</div>}
           <div className={'row' + (feedback.canOverride ? ' sheet-actions' : '')}>
             <button className="btn ghost" onClick={undoLast} title="Ångra svaret och försök igen">
               <Icon name="undo" size={18} /> Ångra
