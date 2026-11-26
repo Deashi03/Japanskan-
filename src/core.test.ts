@@ -479,29 +479,36 @@ describe('ljud för rätt svar i rad', () => {
   const melody = (n: number) => planCorrect(n).filter((p) => ['mallet', 'kalimba', 'bell', 'harp'].includes(p.voice) && p.gain >= 0.25)
   const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length
 
+  const ordinary = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => i + from).filter((n) => !milestoneLevel(n))
+  const SCALE = new Set([0, 2, 4, 7, 9, 12, 14, 16, 19])
+
   it('tonläget klättrar inte med sviten och ligger i mellanregistret', () => {
-    for (let n = 1; n <= 200; n++) {
-      if (milestoneLevel(n)) continue
+    for (const n of ordinary(1, 200)) {
       for (const p of planCorrect(n)) {
         expect(p.semi).toBeLessThanOrEqual(MAX_SEMI)
-        expect(p.semi).toBeGreaterThanOrEqual(-34)
+        expect(p.semi).toBeGreaterThanOrEqual(0)
       }
     }
-    const avg = (from: number, to: number) => mean(Array.from({ length: to - from + 1 }, (_, i) => i + from).filter((n) => !milestoneLevel(n)).flatMap((n) => melody(n).map((p) => p.semi)))
-    // Tiotal efter tiotal ligger melodin kvar på ungefär samma nivå.
+    const avg = (from: number, to: number) => mean(ordinary(from, to).flatMap((n) => melody(n).map((p) => p.semi)))
     expect(Math.abs(avg(1, 19) - avg(101, 119))).toBeLessThan(1.5)
     expect(Math.abs(avg(1, 19) - avg(41, 59))).toBeLessThan(1.5)
   })
+  it('låter alltid positivt: bara durpentatoniska toner, stigande melodi som slutar på en stabil ton', () => {
+    for (const n of ordinary(1, 300)) {
+      const plan = planCorrect(n)
+      for (const p of plan) expect(SCALE.has(p.semi)).toBe(true)
+      const m = melody(n).sort((a, b) => a.at - b.at)
+      for (let i = 1; i < m.length; i++) expect(m[i].semi).toBeGreaterThan(m[i - 1].semi)
+      expect([0, 4, 7]).toContain(m[m.length - 1].semi % 12)
+      // Inga låga eller mörka klanger i vanliga svar.
+      expect(plan.some((p) => ['bass', 'pad', 'timpani', 'horn'].includes(p.voice))).toBe(false)
+    }
+  })
   it('två rätt i rad låter aldrig likadant och instrumenten växlar', () => {
     for (let n = 1; n < 120; n++) expect(signature(planCorrect(n))).not.toBe(signature(planCorrect(n + 1)))
-    const voices = new Set(Array.from({ length: 16 }, (_, i) => i + 1).filter((n) => !milestoneLevel(n)).map((n) => melody(n)[0].voice))
-    expect(voices.size).toBe(4)
-    // Över tjugo svar i rad används många olika ljud, inte några få som upprepas.
-    expect(new Set(Array.from({ length: 24 }, (_, i) => signature(planCorrect(i + 1))).filter(Boolean)).size).toBeGreaterThanOrEqual(23)
-  })
-  it('ackorden följer en följd i stället för att stå still', () => {
-    const roots = Array.from({ length: 8 }, (_, i) => melody(i + 1).map((p) => p.semi).sort((a, b) => a - b)[0])
-    expect(new Set(roots).size).toBeGreaterThanOrEqual(3)
+    const voices = new Set(ordinary(1, 16).map((n) => melody(n)[0].voice))
+    expect(voices.size).toBe(3)
+    expect(new Set(Array.from({ length: 24 }, (_, i) => signature(planCorrect(i + 1)))).size).toBeGreaterThanOrEqual(23)
   })
   it('10, 20, 30 … är milstolpar som växer, med lager som tillkommer', () => {
     expect(milestoneLevel(9)).toBe(0)

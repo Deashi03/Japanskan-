@@ -36,7 +36,7 @@ som bevis. Repetitioner räknas per dag; dygnet börjar klockan 04:00.
 gång till inom tre dagar. Skriver du i en skrivövning i stället ett annat ord som finns i
 ordlistan visas det ordet ("Du tänkte på …"), paret sparas och ordet övas i morgon.
 
-**Svit:** varje rätt i rad låter olika, och 10, 20, 30 … får egna fanfarer och fyrverkerier.
+**Svit:** varje rätt i rad får en egen kort, ljus melodi (alltid uppåtgående och på en skala som inte skaver), med en löpning var femte gång. 10, 20, 30 … får egna fanfarer och fyrverkerier.
 
 ## Publicera på GitHub Pages
 

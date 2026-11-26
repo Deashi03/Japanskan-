@@ -15,43 +15,32 @@ export interface Note {
   gain: number
 }
 
-// Ackord (halvtoner från C5) i C-dur. Melodin hålls i mellanregistret (G4–G6); bara ackordet
-// och instrumentet växlar, så att inget hamnar högre och högre ju längre sviten blir.
-const CHORDS = {
-  C: [0, 4, 7],
-  Am: [-3, 0, 4],
-  F: [-7, -3, 0],
-  G: [-5, -1, 2],
-  Em: [-8, -5, -1],
-  Dm: [-10, -7, -3],
-} as const
-type ChordName = keyof typeof CHORDS
+// Allt för vanliga rätt svar hålls medvetet enkelt och ljust. Melodierna går bara uppåt, bara på
+// durpentatonisk skala (C D E G A, som aldrig skaver) och slutar alltid på en stabil ton
+// (C, E eller G), så att ingen variant kan låta som ett fel svar. Det som varierar är
+// melodins form, tempo, instrument och ibland en liten klocka eller löpning.
 
-/** Ackordsföljder. Varje svar i rad tar nästa ackord, och efter fyra byts följd. */
-const PROGRESSIONS: ChordName[][] = [
-  ['C', 'G', 'Am', 'F'],
-  ['C', 'Am', 'F', 'G'],
-  ['Am', 'F', 'C', 'G'],
-  ['C', 'Em', 'F', 'G'],
-  ['Dm', 'G', 'C', 'Am'],
-]
+/** Durpentatonisk skala över två oktaver, i halvtoner från C5: C D E G A C D E G. */
+const SCALE = [0, 2, 4, 7, 9, 12, 14, 16, 19]
 
-/** Melodiformer: index i ackordets toner [grundton, ters, kvint, grundton + oktav]. */
-const SHAPES = [
-  [1, 2],
-  [0, 2, 3],
-  [2, 1, 2],
-  [0, 1, 2, 3],
-  [3, 2],
-  [1, 3, 2],
-  [2, 3, 1],
+/** Melodiformer som index i SCALE. Alla stiger och slutar på C, E eller G. */
+const MOTIFS = [
   [0, 2],
-  [1, 0, 2, 3],
-  [3, 1],
+  [2, 3],
+  [3, 5],
+  [0, 2, 3],
+  [1, 3, 5],
+  [2, 3, 5],
+  [0, 3, 5],
+  [3, 5, 7],
+  [0, 2, 3, 5],
+  [2, 3, 5, 7],
+  [0, 1, 2, 3],
+  [1, 2, 3, 5],
 ]
 
-/** Melodins instrument turas om, så att klangen inte blir densamma svar efter svar. */
-const MELODY_VOICES: Voice[] = ['mallet', 'kalimba', 'bell', 'harp']
+/** Melodins instrument turas om mellan tre mjuka, släktskapade klanger. */
+const MELODY_VOICES: Voice[] = ['mallet', 'kalimba', 'harp']
 
 /** Den högsta ton ett vanligt rätt svar får använda (G6). */
 export const MAX_SEMI = 19
@@ -65,37 +54,27 @@ export function planCorrect(n: number): Note[] {
   const level = milestoneLevel(k)
   if (level) return planMilestone(level)
 
-  const progIdx = Math.floor((k - 1) / 4) % PROGRESSIONS.length
-  const chord = CHORDS[PROGRESSIONS[progIdx][(k - 1) % 4]]
-  const ext = [chord[0], chord[1], chord[2], chord[0] + 12]
-  let shape = SHAPES[(k * 7 + progIdx) % SHAPES.length]
-  if (k % 3 === 0) shape = [...shape].reverse()
-  const voice = MELODY_VOICES[(k * 3 + progIdx) % MELODY_VOICES.length]
+  // 5 är ensamprimtal med 12, så två svar i rad får aldrig samma form.
+  const motif = MOTIFS[(k * 5 + Math.floor(k / 12)) % MOTIFS.length]
+  const voice = MELODY_VOICES[k % MELODY_VOICES.length]
   const step = k % 2 ? 0.085 : 0.105
-  const notes: Note[] = shape.map((idx, i) => ({
+  const notes: Note[] = motif.map((idx, i) => ({
     voice,
-    semi: ext[idx],
+    semi: SCALE[idx],
     at: i * step,
-    dur: i === shape.length - 1 ? 0.7 : 0.4,
+    dur: i === motif.length - 1 ? 0.7 : 0.4,
     gain: 0.3,
   }))
+  const last = SCALE[motif[motif.length - 1]]
 
-  // Från tredje svaret ligger ackordet som ett mjukt komp under melodin, i ett annat
-  // instrument än melodin.
-  if (k >= 3) {
-    const comp: Voice = voice === 'harp' || voice === 'kalimba' ? 'pad' : 'harp'
-    chord.forEach((s, i) => notes.push({ voice: comp, semi: s - 12, at: i * 0.05, dur: 0.8, gain: comp === 'pad' ? 0.1 : 0.13 }))
-  }
-  if (k >= 6 && k % 2 === 0) notes.push({ voice: 'bass', semi: chord[0] - 24, at: 0, dur: 0.5, gain: 0.2 })
-  if (k % 4 === 0) notes.push({ voice: 'bell', semi: chord[0] + 12, at: shape.length * step, dur: 1.1, gain: 0.08 })
+  // En liten klocka på sluttonen var fjärde svar.
+  if (k % 4 === 0) notes.push({ voice: 'bell', semi: last, at: motif.length * step, dur: 1.1, gain: 0.09 })
 
-  // Var femte svar (utom milstolparna) avslutas med en liten löpning genom ackordet.
+  // Var femte svar (utom milstolparna) avslutas med en löpning uppför skalan.
   if (k % 5 === 0) {
-    const run = [...ext, chord[1] + 12, chord[2] + 12]
-    run.forEach((s, i) => notes.push({ voice: 'mallet', semi: s, at: 0.22 + i * 0.06, dur: 0.45, gain: 0.2 }))
-    const top = 0.22 + run.length * 0.06
-    notes.push({ voice: 'bell', semi: chord[2] + 12, at: top, dur: 1.2, gain: 0.09 })
-    notes.push({ voice: 'bass', semi: chord[0] - 24, at: top, dur: 0.8, gain: 0.18 })
+    SCALE.slice(0, 6).forEach((s, i) => notes.push({ voice: 'mallet', semi: s, at: 0.22 + i * 0.06, dur: 0.45, gain: 0.2 }))
+    const top = 0.22 + 6 * 0.06
+    notes.push({ voice: 'bell', semi: 12, at: top, dur: 1.2, gain: 0.1 })
     notes.push({ voice: 'sparkle', semi: MAX_SEMI - 7, at: top + 0.04, dur: 0.3, gain: 0.05 })
   }
   return notes
