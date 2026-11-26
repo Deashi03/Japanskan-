@@ -32,10 +32,12 @@ test('ett första pass: fem nya ord går igenom alla fem övningstyper och blir 
   assert.deepEqual([...types].sort(), ['listen', 'match', 'mc_ja_sv', 'mc_sv_ja', 'type_sv'])
 
   // De fem första orden i filen är nu inlärda (Review) och kommer tillbaka först efter en dag.
+  // Sidan går på en låtsasklocka, så jämförelsen görs mot sidans tid och inte datorns.
+  const now = await page.evaluate(() => Date.now())
   for (const w of words.slice(0, 5)) {
     const card = await cardOf(page, w.word)
     assert.equal(card?.state, 2, `${w.word} ska vara inlärt`)
-    assert.ok(card.due > Date.now(), `${w.word} ska ha ett datum framåt`)
+    assert.ok(card.due > now,`${w.word} ska ha ett datum framåt`)
   }
   // De två sista har inte presenterats.
   for (const w of words.slice(5)) assert.equal(await cardOf(page, w.word), undefined)
