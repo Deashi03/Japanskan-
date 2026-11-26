@@ -139,10 +139,13 @@ export function isDue(card: CardData, now: number): boolean {
 }
 
 /** Omprov efter ett fel: samma övning dagen efter och en gång till inom de tre följande dagarna. */
-export function withRetry(card: CardData, type: ExerciseType, now: number, rnd: () => number = Math.random): CardData {
+export function withRetry(card: CardData, type: ExerciseType, now: number, rnd: () => number = Math.random, single = false): CardData {
   const today = dayIndex(now)
   const keep = (card.retry ?? []).filter((r) => r.type !== type)
-  return { ...card, retry: [...keep, { type, day: today + 1 }, { type, day: today + 2 + Math.floor(rnd() * 3) }] }
+  // `single`: bara ett omprov i morgon – används när man blandat ihop två ord, vilket oftast
+  // är en felklickning eller en tankeställare snarare än att man faktiskt inte kan ordet.
+  const retries = single ? [{ type, day: today + 1 }] : [{ type, day: today + 1 }, { type, day: today + 2 + Math.floor(rnd() * 3) }]
+  return { ...card, retry: [...keep, ...retries] }
 }
 
 /** Ett klarat omprov stryks (det tidigaste som har förfallit för den övningen). */

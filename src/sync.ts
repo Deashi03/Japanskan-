@@ -1,8 +1,8 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { useSyncExternalStore } from 'react'
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from './config'
-import { db, mergeRemote, onLocalWrite } from './store'
-import type { Kind, Row } from './types'
+import { onLocalWrite } from './store'
+import { syncOnce, type RemoteRow, type RowsApi } from './syncCore'
 
 export interface SyncState {
   configured: boolean
@@ -10,12 +10,14 @@ export interface SyncState {
   status: 'idle' | 'syncing' | 'error'
   error: string | null
   lastSync: number | null
+  /** Under en stor uppladdning, till exempel "120 av 900". */
+  progress: string | null
 }
 
 const configured = !!(SUPABASE_URL && SUPABASE_ANON_KEY)
 const client: SupabaseClient | null = configured ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null
 
-let state: SyncState = { configured, email: null, status: 'idle', error: null, lastSync: null }
+let state: SyncState = { configured, email: null, status: 'idle', error: null, lastSync: null, progress: null }
 const listeners = new Set<() => void>()
 function set(patch: Partial<SyncState>) {
   state = { ...state, ...patch }
@@ -32,7 +34,16 @@ let userId: string | null = null
 let running = false
 let again = false
 
-interface RemoteRow { id: string; kind: Kind; data: unknown; updated_at: number; deleted: boolean; seq: number }
+/** Kopplar synkkärnan till Supabase-tabellen "rows". */
+function supabaseApi(c: SupabaseClient): RowsApi {
+  return {
+    upsert: async (rows) => ({ error: (await c.from('rows').upsert(rows, { onConflict: 'user_id,id' })).error }),
+    fetchSince: async (cursor, limit) => {
+      const { data, error } = await c.from('rows').select('id,kind,data,updated_at,deleted,seq').gt('seq', cursor).order('seq', { ascending: true }).limit(limit)
+      return { data: (data ?? null) as RemoteRow[] | null, error }
+    },
+  }
+}
 
 export async function syncNow() {
   if (!client || !userId) return
@@ -41,48 +52,14 @@ export async function syncNow() {
     return
   }
   running = true
-  set({ status: 'syncing', error: null })
+  set({ status: 'syncing', error: null, progress: null })
   try {
-    // 1. Skicka upp lokala ändringar.
-    const dirty = await db.rows.where('dirty').equals(1).toArray()
-    for (let i = 0; i < dirty.length; i += 500) {
-      const batch = dirty.slice(i, i + 500)
-      const { error } = await client.from('rows').upsert(
-        batch.map((r) => ({ user_id: userId, id: r.id, kind: r.kind, data: r.data, updated_at: r.updatedAt, deleted: r.deleted })),
-        { onConflict: 'user_id,id' },
-      )
-      if (error) throw error
-      await db.transaction('rw', db.rows, async () => {
-        for (const r of batch) {
-          const cur = await db.rows.get(r.id)
-          // Markera bara som synkad om raden inte hunnit ändras igen under tiden.
-          if (cur && cur.updatedAt === r.updatedAt) await db.rows.update(r.id, { dirty: 0 })
-        }
-      })
-    }
-    // 2. Hämta allt som ändrats på servern sedan sist.
-    const cursorKey = 'cursor:' + userId
-    let cursor = ((await db.meta.get(cursorKey))?.value as number | undefined) ?? 0
-    for (;;) {
-      const { data, error } = await client
-        .from('rows')
-        .select('id,kind,data,updated_at,deleted,seq')
-        .gt('seq', cursor)
-        .order('seq', { ascending: true })
-        .limit(1000)
-      if (error) throw error
-      const rows = (data ?? []) as RemoteRow[]
-      if (!rows.length) break
-      await mergeRemote(
-        rows.map((r): Row => ({ id: r.id, kind: r.kind, data: r.data, updatedAt: Number(r.updated_at), deleted: r.deleted, dirty: 0 })),
-      )
-      cursor = Number(rows[rows.length - 1].seq)
-      await db.meta.put({ key: cursorKey, value: cursor })
-      if (rows.length < 1000) break
-    }
-    set({ status: 'idle', lastSync: Date.now() })
+    await syncOnce(supabaseApi(client), userId, {
+      onProgress: (done, total) => set({ progress: total > 20 ? `${done} av ${total}` : null }),
+    })
+    set({ status: 'idle', lastSync: Date.now(), progress: null })
   } catch (e) {
-    set({ status: 'error', error: (e as { message?: string })?.message ?? String(e) })
+    set({ status: 'error', error: (e as { message?: string })?.message ?? String(e), progress: null })
   } finally {
     running = false
     if (again) {

@@ -1,15 +1,18 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
-import { audioSessionEnd, audioSessionStart, canSpeak, celebrate, FINALE_AT, fx, HIT_TIMES, prepareHarp, speak, speakAll, stopSpeaking } from '../fx'
+import { audioSessionEnd, audioSessionStart, canSpeak, celebrate, FINALE_AT, fx, HIT_TIMES, prepareHarp, speak, speakAll, stopSpeaking, streakFireworks } from '../fx'
 import { getNoListen, useNoListen } from '../prefs'
 import {
   afterIntro,
   buildExercise,
   buildQueue,
   extraQueue,
+  findConfusion,
   nextFresh,
   overtimeQueue,
+  pickExample,
   remainingReviews,
   requeue,
+  shortMeaning,
   shuffle,
   type Answered,
   type Exercise,
@@ -20,7 +23,7 @@ import { computeStats } from '../stats'
 import { actions, getExtra, getSnap, loadExtras, uid } from '../store'
 import { syncNow } from '../sync'
 import type { CardData, Example, LogData, Word } from '../types'
-import { FuriText, Icon, Ja, SpeakButton, WordBreakdown, WordDistinctions, WordExamples, WordGrammar, WordHead } from './bits'
+import { Furi, FuriText, Icon, Ja, SpeakButton, WordBreakdown, WordDistinctions, WordExamples, WordGrammar, WordHead } from './bits'
 import { Cloze, Matching, MultipleChoice, Sentence, Typing, type Result } from './Exercises'
 import { QuickSettings } from './QuickSettings'
 
@@ -39,6 +42,8 @@ interface Feedback {
   learned?: string
   /** Ett fel ger ett omprov i slutet av passet och de närmaste dagarna. */
   retryNote?: boolean
+  /** Ett annat ord som det felaktiga svaret faktiskt hörde till – en förväxling. */
+  confusion?: { word: Word; marked: boolean }
 }
 type IntroPart = 'grammar' | 'breakdown' | 'examples' | 'distinctions'
 const introParts = (w: Word): IntroPart[] => [
@@ -47,7 +52,7 @@ const introParts = (w: Word): IntroPart[] => [
   ...(w.examples.length ? ['examples' as const] : []),
   ...(w.distinctions.length ? ['distinctions' as const] : []),
 ]
-interface Undo { queue: QItem[]; cards: [string, CardData][]; logIds: string[]; tally: Tally }
+interface Undo { queue: QItem[]; cards: [string, CardData][]; logIds: string[]; tally: Tally; words: Word[] }
 
 /** normal = vanligt pass · extra = extra övning · overtime = tiden är ute, nya ord görs klart ·
  *  asking = frågar om man vill fortsätta repetera · bonus = fortsätter med dagens repetitioner */
@@ -91,6 +96,7 @@ function makeTurn(queue: QItem[]): Turn {
     known: new Set(snap.cards.keys()),
     canListen: !noListen,
     extra,
+    stability: card.stability,
   })
   const items = exercise.type === 'match' ? [item, ...partnerItems.filter((q) => exercise.graded.includes(q.wordId))] : [item]
   return { kind: 'quiz', item, exercise, items }
@@ -160,7 +166,7 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
   const [known, setKnown] = useState(0)
   const [paused, setPaused] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [toast, setToast] = useState<{ id: number; text: string } | null>(null)
+  const [toast, setToast] = useState<{ id: number; text: string; level: number } | null>(null)
   const noListen = useNoListen()
   const pausedRef = useRef(false)
   pausedRef.current = paused || settingsOpen
@@ -337,16 +343,46 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
       if (results.length === 1 && graded && r.correct) nextDue = next.due
       logOps.push([uid(), log])
     }
-    undo.current = { queue, cards: prevCards, logIds: logOps.map(([id]) => id), tally }
+    // Förväxling: svarade man fel i en skrivövning med något som faktiskt är ett annat ord i
+    // ordlistan? Då visas det ordet i svarsrutan, paret sparas, och ordet – om man redan
+    // börjat lära sig det – får ett omprov i morgon. Intervallet nollställs inte: oftast var
+    // det en felklickning eller en tanke som for iväg, inte att man inte kan ordet.
+    const first = results[0]
+    const prevWords: Word[] = []
+    let confusion: Feedback['confusion']
+    if (!first.correct && first.answer && (type === 'type_sv' || type === 'type_from_sv')) {
+      const word = turn.exercise.word
+      const other = findConfusion(first.answer, word, snap.words.values(), type === 'type_from_sv', (id) => snap.cards.has(id))
+      if (other) {
+        const oc = snap.cards.get(other.id)
+        const mark = !turn.item.extra && !!oc && oc.state !== State.New && !other.suspended
+        if (mark && oc) {
+          prevCards.push([other.id, oc])
+          cardOps.push([other.id, withRetry(oc, type, now, Math.random, true)])
+        }
+        confusion = { word: other, marked: mark }
+        if (!word.confusable?.includes(other.id) || !other.confusable?.includes(word.id)) {
+          prevWords.push(word, other)
+          void actions.saveWords([
+            { ...word, confusable: [...new Set([...(word.confusable ?? []), other.id])] },
+            { ...other, confusable: [...new Set([...(other.confusable ?? []), word.id])] },
+          ])
+        }
+      }
+    }
+    undo.current = { queue, cards: prevCards, logIds: logOps.map(([id]) => id), tally, words: prevWords }
     void actions.apply({ cards: cardOps, logs: logOps })
     setQueue(requeue(queue, answered))
 
     const wrong = results.filter((r) => !r.correct)
     const allCorrect = wrong.length === 0
     const combo = allCorrect ? tally.combo + 1 : 0
-    if (allCorrect) fx.correct(tally.combo)
-    else if (type !== 'match') fx.wrong()
-    if (allCorrect && combo >= 5 && combo % 5 === 0) setToast({ id: Date.now(), text: `${combo} i rad!` })
+    if (allCorrect) {
+      // `combo` är hur många rätt i rad det här var; ljudet och firandet växer med sviten.
+      fx.correct(combo)
+      streakFireworks(combo)
+    } else if (type !== 'match') fx.wrong()
+    if (allCorrect && combo >= 5 && combo % 5 === 0) setToast({ id: Date.now(), text: `${combo} i rad!`, level: combo % 10 === 0 ? combo / 10 : 0 })
     setTally({
       ...tally,
       answered: tally.answered + results.length,
@@ -355,14 +391,15 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
       bestCombo: Math.max(tally.bestCombo, combo),
     })
     const words = (allCorrect ? results : wrong).map((r) => snap.words.get(r.wordId)!).filter(Boolean)
-    // Efter ett rätt svar visas en exempelmening, så att ordet syns i sitt sammanhang
-    // (den läses bara upp om man trycker på högtalaren).
+    // Efter ett svar – rätt eller fel – visas en exempelmening, så att ordet syns i sitt
+    // sammanhang (den läses bara upp om man trycker på högtalaren). Meningens svårighet följer
+    // hur väl ordet sitter. Inte i dra-övningen (flera ord) eller när meningen redan var frågan.
     const ex = turn.exercise
     let example: Feedback['example']
-    if (allCorrect && results.length === 1 && ex.type !== 'match' && ex.type !== 'sentence' && ex.type !== 'form') {
-      const bank = getExtra(ex.word.id)?.examples.filter((e) => (e.level ?? 1) <= 2) ?? []
-      const pool = bank.length ? bank : ex.word.examples
-      const pick = ex.type === 'cloze' ? ex.example : pool[Math.floor(Math.random() * pool.length)]
+    if (results.length === 1 && ex.type !== 'match' && ex.type !== 'sentence' && ex.type !== 'form') {
+      const bank = getExtra(ex.word.id)?.examples ?? []
+      const stability = snap.cards.get(ex.word.id)?.stability ?? 0
+      const pick = ex.type === 'cloze' ? ex.example : pickExample(bank.length ? bank : ex.word.examples, stability)
       if (pick) example = { word: ex.word, ex: pick }
     }
     setFeedback({
@@ -374,6 +411,7 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
       nextDue: allCorrect ? nextDue : undefined,
       canOverride: !allCorrect && (type === 'type_sv' || type === 'type_from_sv'),
       retryNote: !allCorrect && !turn.item.extra,
+      confusion,
     })
     setPhase('feedback')
   }
@@ -383,6 +421,7 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
     if (!u) return
     undo.current = null
     void actions.apply({ cards: u.cards, logs: u.logIds.map((id) => [id, null]) })
+    if (u.words.length) void actions.saveWords(u.words)
     setQueue(u.queue)
     setTally(u.tally)
     setFeedback(null)
@@ -397,6 +436,7 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
     if (!u || !last) return
     undo.current = null
     void actions.apply({ cards: u.cards, logs: u.logIds.map((id) => [id, null]) })
+    if (u.words.length) void actions.saveWords(u.words)
     // Svaret sparas så att det godkänns direkt nästa gång: ett svenskt svar bland
     // synonymerna, ett japanskt bland de japanska alternativen.
     const { wordId, answer } = last.results[0]
@@ -470,12 +510,16 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
           </div>
         </div>
       )}
-      {toast && <div className="toast" key={toast.id} onAnimationEnd={() => setToast(null)}><Icon name="flame" size={28} /> {toast.text}</div>}
+      {toast && (
+        <div className={'toast' + (toast.level ? ` milestone l${Math.min(toast.level, 6)}` : '')} key={toast.id} onAnimationEnd={() => setToast(null)}>
+          <Icon name="flame" size={toast.level ? 36 : 28} /> {toast.text}
+        </div>
+      )}
       <div className={'session-body' + (phase === 'feedback' && feedback && !feedback.correct ? ' nudge' : '')}>
         {mode === 'extra' && <div className="notice slim">Extra övning – påverkar inte schemat</div>}
         {mode === 'overtime' && <div className="notice slim">Tiden är ute – vi gör klart de påbörjade orden ({queue.length} {queue.length === 1 ? 'fråga' : 'frågor'} kvar)</div>}
         {mode === 'bonus' && <div className="notice slim">Dagens repetitioner – {remainingReviews(queue).length} kvar</div>}
-        {turn?.kind === 'quiz' && turn.item.retry && !turn.item.extra && <div className="notice slim retry">Omprov – den här övningen blev fel förra gången</div>}
+        {turn?.kind === 'quiz' && turn.item.retry && !turn.item.extra && <div className="notice slim retry">Omprov – den här övningen övas extra</div>}
         {turn?.kind === 'intro' && (() => {
           const parts = introParts(turn.word)
           const part = parts[introStep - 1]
@@ -538,6 +582,16 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
               <SpeakButton text={w.word} small />
             </div>
           ))}
+          {feedback.confusion && (
+            <div className="sheet-confusion">
+              <span className="sheet-confusion-label">Du tänkte på</span>
+              <div className="sheet-confusion-word">
+                <Furi word={feedback.confusion.word.word} reading={feedback.confusion.word.reading} />
+                <span>= {shortMeaning(feedback.confusion.word.meaning)}</span>
+              </div>
+              {feedback.confusion.marked && <span className="sheet-confusion-note">Det ordet övas igen i morgon.</span>}
+            </div>
+          )}
           {feedback.example && (
             <div className="sheet-example">
               <div>
