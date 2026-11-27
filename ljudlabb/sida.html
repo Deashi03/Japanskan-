@@ -1,0 +1,224 @@
+<title>Ljudval Japanskan</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap">
+<style>
+  /* Layout: en lång lista med kort, två avsnitt; en fast valrad längst ner som sammanfattar. */
+  :root {
+    --bg: #f4f5f8;
+    --surface: #ffffff;
+    --fg: #1c2230;
+    --muted: #5d667a;
+    --line: #dde1ea;
+    --accent: #2c4a8f;
+    --accent-fg: #ffffff;
+    --accent-soft: #e4eaf8;
+    --hot: #c8442f;
+    --font-text: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --font-head: 'Space Grotesk', 'Inter', system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12151d; --surface: #1a1f2b; --fg: #e8ebf3; --muted: #99a2b8; --line: #2c3344;
+      --accent: #8fa8ee; --accent-fg: #0f1422; --accent-soft: #252d45; --hot: #ef7a66; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12151d; --surface: #1a1f2b; --fg: #e8ebf3; --muted: #99a2b8; --line: #2c3344;
+    --accent: #8fa8ee; --accent-fg: #0f1422; --accent-soft: #252d45; --hot: #ef7a66; color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--fg); font: 15px/1.5 var(--font-text);
+    padding-block: 24px 120px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+  main { max-width: 1100px; margin: 0 auto; }
+  h1, h2 { font-family: var(--font-head); font-weight: 600; letter-spacing: -0.01em; text-wrap: balance; margin: 0; }
+  h1 { font-size: 1.9rem; }
+  h2 { font-size: 1.3rem; margin-top: 40px; }
+  .lead { color: var(--muted); max-width: 62ch; margin: 8px 0 0; }
+  .sub { color: var(--muted); max-width: 62ch; margin: 6px 0 16px; }
+  .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); }
+  .card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px;
+    display: flex; flex-direction: column; gap: 10px; min-width: 0;
+  }
+  .card.chosen { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+  .head { display: flex; align-items: baseline; gap: 10px; }
+  .num { font: 600 0.8rem var(--font-head); color: var(--muted); min-width: 1.6em; font-variant-numeric: tabular-nums; }
+  .name { font: 600 1.05rem var(--font-head); }
+  .desc { color: var(--muted); font-size: 0.9rem; margin: 0; flex: 1; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; }
+  button {
+    font: 500 0.88rem var(--font-text); color: var(--fg); background: var(--accent-soft); border: 1px solid transparent;
+    border-radius: 8px; padding: 9px 12px; min-height: 40px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button.play::before { content: '▶'; font-size: 0.7em; margin-right: 6px; color: var(--accent); }
+  button.on { background: var(--accent); color: var(--accent-fg); }
+  button.on::before { color: var(--accent-fg); }
+  button.pick { background: transparent; border-color: var(--line); margin-left: auto; }
+  button.pick[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+  .levels button { min-width: 52px; }
+  .bar {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; background: var(--surface); border-top: 1px solid var(--line);
+    padding-top: 10px; padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+    padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+  .bar-in { max-width: 1100px; margin: 0 auto; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .bar-text { flex: 1; min-width: 200px; font-size: 0.9rem; }
+  .bar-text b { font-weight: 600; }
+  .stop { color: var(--hot); }
+  .sum { font: 600 1.3rem var(--font-head); margin-top: 40px; cursor: pointer; }
+  details[open] .sum { margin-bottom: 8px; }
+  .note { color: var(--muted); font-size: 0.85rem; max-width: 62ch; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<main>
+  <h1>Ljudval för Japanskan</h1>
+  <p class="lead">Tryck dig igenom ljuden och välj ett vanligt rätt-ljud och en grupp firanden. Säg sedan numren till mig, eller tryck på Kopiera längst ner.</p>
+  <p class="note">Ljuden skapas i din webbläsare när du trycker. Sätt på ljudet och stäng av tyst läge på iPhone, annars hörs ingenting.</p>
+
+  <h2>1. Rätt-ljud, 20 nya förslag</h2>
+  <p class="sub">Omgjorda från grunden: exakt stämda toner med rena övertoner, inget brus och en mycket liten, mjuk efterklang. Varje förslag har ett ljud för vanliga rätt svar och en större variant för femte, femtonde, tjugofemte i rad. "I följd" spelar fyra vanliga svar och sedan det femte.</p>
+  <div class="grid" id="ok"></div>
+
+  <details>
+  <summary class="sum">2. Firanden för 10, 20, 30 … (du har valt Filmmusik)</summary>
+  <p class="sub">Varje grupp har ett eget tema och fem nivåer som växer. 10 i rad ger nivå 1, 20 nivå 2, 30 nivå 3, 40 nivå 4 och 50 eller fler nivå 5. "Alla nivåer" spelar dem efter varandra.</p>
+  <div class="grid" id="groups"></div>
+  </details>
+</main>
+
+<div class="bar">
+  <div class="bar-in">
+    <div class="bar-text" id="summary" aria-live="polite"></div>
+    <button id="stop" class="stop">Stoppa ljud</button>
+    <button id="copy">Kopiera val</button>
+  </div>
+</div>
+
+<script>
+/*META*/
+/*SYNTH*/
+(() => {
+  const $ = (s) => document.querySelector(s)
+  let ctx = null
+  let live = []
+  const cache = new Map()
+  const choice = { ok: null, group: 5 }
+  try { Object.assign(choice, JSON.parse(localStorage.getItem('ljudval2') || '{}')) } catch {}
+
+  const audio = () => {
+    if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)()
+    if (ctx.state === 'suspended') ctx.resume()
+    return ctx
+  }
+  const stopAll = () => {
+    for (const s of live) { try { s.stop() } catch {} }
+    live = []
+    document.querySelectorAll('button.on').forEach((b) => b.classList.remove('on'))
+  }
+  const get = (key, make) => {
+    if (!cache.has(key)) {
+      const s = make()
+      const b = audio().createBuffer(2, s.L.length, s.sr)
+      b.copyToChannel(s.L, 0)
+      b.copyToChannel(s.R, 1)
+      cache.set(key, b)
+    }
+    return cache.get(key)
+  }
+  const schedule = (items, button) => {
+    stopAll()
+    const c = audio()
+    const t0 = c.currentTime + 0.05
+    let end = 0
+    for (const [buf, at] of items) {
+      const src = c.createBufferSource()
+      src.buffer = buf
+      src.connect(c.destination)
+      src.start(t0 + at)
+      live.push(src)
+      end = Math.max(end, at + buf.duration)
+    }
+    if (button) {
+      button.classList.add('on')
+      setTimeout(() => button.classList.remove('on'), end * 1000)
+    }
+  }
+  const okBuf = (i) => get('ok' + i, () => renderClean(CLEAN[i]))
+  const fiveBuf = (i) => get('five' + i, () => renderCleanFive(CLEAN[i]))
+  const grpBuf = (g, T) => get(`g${g}-${T}`, () => renderGroup(GROUPS[g], T))
+
+  const btn = (label, cls, fn) => {
+    const b = document.createElement('button')
+    b.textContent = label
+    if (cls) b.className = cls
+    b.addEventListener('click', () => fn(b))
+    return b
+  }
+
+  function save() { try { localStorage.setItem('ljudval2', JSON.stringify(choice)) } catch {} }
+  function summary() {
+    const ok = choice.ok != null ? `<b>Rätt-ljud ${choice.ok + 1}</b> ${META.ok[choice.ok].name}` : 'Inget rätt-ljud valt'
+    const gr = choice.group != null ? `<b>Firande ${choice.group + 1}</b> ${META.groups[choice.group].name}` : 'Inget firande valt'
+    $('#summary').innerHTML = `${ok} &nbsp;·&nbsp; ${gr}`
+    document.querySelectorAll('#ok .card').forEach((c, i) => { c.classList.toggle('chosen', choice.ok === i); c.querySelector('.pick').setAttribute('aria-pressed', choice.ok === i) })
+    document.querySelectorAll('#groups .card').forEach((c, i) => { c.classList.toggle('chosen', choice.group === i); c.querySelector('.pick').setAttribute('aria-pressed', choice.group === i) })
+  }
+
+  function card(num, name, desc) {
+    const el = document.createElement('div')
+    el.className = 'card'
+    el.innerHTML = `<div class="head"><span class="num">${num}</span><span class="name"></span></div><p class="desc"></p>`
+    el.querySelector('.name').textContent = name
+    el.querySelector('.desc').textContent = desc
+    return el
+  }
+
+  META.ok.forEach((m, i) => {
+    const el = card(String(i + 1).padStart(2, '0'), m.name, m.desc)
+    const row = document.createElement('div')
+    row.className = 'row'
+    row.append(
+      btn('Rätt', 'play', (b) => schedule([[okBuf(i), 0]], b)),
+      btn('Femte', 'play', (b) => schedule([[fiveBuf(i), 0]], b)),
+      btn('I följd', 'play', (b) => schedule([[okBuf(i), 0], [okBuf(i), 1.1], [okBuf(i), 2.2], [okBuf(i), 3.3], [fiveBuf(i), 4.4]], b)),
+      btn('Välj', 'pick', () => { choice.ok = choice.ok === i ? null : i; save(); summary() }),
+    )
+    el.append(row)
+    $('#ok').append(el)
+  })
+
+  META.groups.forEach((m, g) => {
+    const el = card(String(g + 1).padStart(2, '0'), m.name, m.desc)
+    const row = document.createElement('div')
+    row.className = 'row levels'
+    ;['10', '20', '30', '40', '50+'].forEach((label, k) => row.append(btn(label, 'play', (b) => schedule([[grpBuf(g, k + 1), 0]], b))))
+    const row2 = document.createElement('div')
+    row2.className = 'row'
+    row2.append(
+      btn('Alla nivåer', 'play', (b) => {
+        let at = 0
+        const items = [1, 2, 3, 4, 5].map((T) => { const buf = grpBuf(g, T); const it = [buf, at]; at += buf.duration * 0.85 + 0.5; return it })
+        schedule(items, b)
+      }),
+      btn('Välj', 'pick', () => { choice.group = choice.group === g ? null : g; save(); summary() }),
+    )
+    el.append(row, row2)
+    $('#groups').append(el)
+  })
+
+  $('#stop').addEventListener('click', stopAll)
+  $('#copy').addEventListener('click', (e) => {
+    const t = `Rätt-ljud: ${choice.ok != null ? `${choice.ok + 1} ${META.ok[choice.ok].name}` : '–'}. Firande: ${choice.group != null ? `${choice.group + 1} ${META.groups[choice.group].name}` : '–'}.`
+    const done = () => { e.target.textContent = 'Kopierat'; setTimeout(() => (e.target.textContent = 'Kopiera val'), 1500) }
+    try { navigator.clipboard.writeText(t).then(done, () => { e.target.textContent = t }) } catch { e.target.textContent = t }
+  })
+  summary()
+})()
+</script>

@@ -41,10 +41,10 @@ export function App() {
   const { sound, audioLag } = useStore().settings
   useEffect(syncLag, [sound, audioLag])
   const [tab, setTab] = useState<Tab>('home')
-  const [minutes, setMinutes] = useState<number | null>(null)
+  const [run, setRun] = useState<{ minutes: number | null; review: boolean } | null>(null)
   const [importing, setImporting] = useState(false)
 
-  if (minutes !== null) return <Session minutes={minutes} onExit={() => setMinutes(null)} />
+  if (run) return <Session minutes={run.minutes} review={run.review} onExit={() => setRun(null)} />
 
   return (
     <div className="shell">
@@ -58,7 +58,7 @@ export function App() {
         ))}
       </nav>
       <main className="main">
-        {tab === 'home' && <Home onStart={setMinutes} onImport={() => setImporting(true)} />}
+        {tab === 'home' && <Home onStart={(minutes, review = false) => setRun({ minutes, review })} onImport={() => setImporting(true)} />}
         {tab === 'words' && <WordList onImport={() => setImporting(true)} />}
         {tab === 'stats' && <StatsView />}
         {tab === 'settings' && <SettingsView />}

@@ -5,6 +5,7 @@ import {
   afterIntro,
   buildExercise,
   buildQueue,
+  buildReviewQueue,
   extraQueue,
   findConfusion,
   nextFresh,
@@ -131,7 +132,7 @@ function useViewportFit(ref: RefObject<HTMLDivElement | null>) {
 
 /** Klocka och tidslinje. Ritar om sig själv fyra gånger i sekunden utan att resten av
  *  passet behöver ritas om (det var en källa till lagg). */
-function SessionClock({ elapsedRef, total, overtime, combo, answered }: { elapsedRef: RefObject<number>; total: number; overtime: boolean; combo: number; answered: number }) {
+function SessionClock({ elapsedRef, total, overtime, combo, answered, done }: { elapsedRef: RefObject<number>; total: number; overtime: boolean; combo: number; answered: number; done: number }) {
   const [, tick] = useState(0)
   useEffect(() => {
     const t = setInterval(() => tick((n) => n + 1), 250)
@@ -139,22 +140,28 @@ function SessionClock({ elapsedRef, total, overtime, combo, answered }: { elapse
   }, [])
   const elapsed = elapsedRef.current ?? 0
   const mmss = (ms: number) => `${Math.floor(ms / 60_000)}:${String(Math.floor((ms % 60_000) / 1000)).padStart(2, '0')}`
-  const pct = Math.min(100, (elapsed / total) * 100)
+  // Obegränsat pass: klockan räknar uppåt och fältet visar hur stor del av de ord som från början
+  // skulle repeteras som är gjorda.
+  const unlimited = !Number.isFinite(total)
+  const pct = unlimited ? Math.min(100, done * 100) : Math.min(100, (elapsed / total) * 100)
   return (
     <>
-      <div className="progress" role="progressbar" aria-label="Tid" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100}>
+      <div className="progress" role="progressbar" aria-label={unlimited ? 'Framsteg' : 'Tid'} aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100}>
         <div className="progress-fill" style={{ transform: `scaleX(${pct / 100})` }}>
           {combo > 0 && <i className="shine" key={answered} />}
         </div>
       </div>
-      <span className="clock">{overtime ? '+' + mmss(Math.max(0, elapsed - total)) : mmss(Math.max(0, total - elapsed))}</span>
+      <span className="clock">{unlimited ? mmss(elapsed) : overtime ? '+' + mmss(Math.max(0, elapsed - total)) : mmss(Math.max(0, total - elapsed))}</span>
     </>
   )
 }
 
-export function Session({ minutes, onExit }: { minutes: number; onExit: () => void }) {
-  const total = minutes * 60_000
-  const [queue, setQueue] = useState<QItem[]>(() => buildQueue(getSnap(), Date.now()))
+/** `minutes` är passets längd, eller null för ett obegränsat pass. `review` är ett repetitionspass:
+ *  bara ord som ska repeteras, inga nya ord. */
+export function Session({ minutes, review = false, onExit }: { minutes: number | null; review?: boolean; onExit: () => void }) {
+  const total = minutes === null ? Infinity : minutes * 60_000
+  const [queue, setQueue] = useState<QItem[]>(() => (review ? buildReviewQueue : buildQueue)(getSnap(), Date.now()))
+  const startCount = useRef(Math.max(1, queue.length))
   const [turnNo, setTurnNo] = useState(0)
   const [attempt, setAttempt] = useState(0)
   const [phase, setPhase] = useState<'question' | 'feedback' | 'summary'>('question')
@@ -472,7 +479,7 @@ export function Session({ minutes, onExit }: { minutes: number; onExit: () => vo
         <button className="icon-btn" onClick={finish} aria-label="Avsluta passet">
           <Icon name="close" />
         </button>
-        <SessionClock elapsedRef={elapsedRef} total={total} overtime={overtime} combo={tally.combo} answered={tally.answered} />
+        <SessionClock elapsedRef={elapsedRef} total={total} overtime={overtime} combo={tally.combo} answered={tally.answered} done={tally.answered / startCount.current} />
         <button className="icon-btn pause-btn" onClick={() => setSettingsOpen(true)} aria-label="Inställningar">
           <Icon name="gear" size={20} />
         </button>

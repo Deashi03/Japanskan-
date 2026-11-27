@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><linearGradient id="i40_a" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FBE3B6"/><stop offset="1" stop-color="#F5C478"/></linearGradient><linearGradient id="i40_t" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#F2A944"/><stop offset="1" stop-color="#DD7F25"/></linearGradient></defs><rect width="100" height="100" fill="url(#i40_a)"/>
+      <g transform="rotate(-18 50 50)">
+      <path d="M8 48C8 30 28 22 50 22C66 22 76 30 82 40L96 28C98 40 98 58 96 70L82 58C76 68 66 76 50 76C28 76 8 66 8 48Z" fill="url(#i40_t)"/>
+      <path d="M82 40L96 28C98 40 98 58 96 70L82 58Z" fill="#C9772B"/>
+      <g fill="none" stroke="#B5651E" stroke-width="1.700" stroke-linecap="round" opacity=".7"><path d="M40 34Q46 48 40 62M52 32Q58 48 52 64M64 34Q69 48 64 62"/></g>
+      <path d="M24 40Q22 48 24 56" fill="none" stroke="#B5651E" stroke-width="1.700" stroke-linecap="round" opacity=".7"/>
+      <circle cx="22" cy="42" r="4" fill="#1C1C24"/><circle cx="23.200" cy="40.800" r="1.200" fill="#fff"/>
+      <path d="M12 56Q16 60 22 58" fill="none" stroke="#B5651E" stroke-width="2" stroke-linecap="round"/></g></svg>
