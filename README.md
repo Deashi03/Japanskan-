@@ -36,7 +36,16 @@ som bevis. Repetitioner räknas per dag; dygnet börjar klockan 04:00.
 gång till inom tre dagar. Skriver du i en skrivövning i stället ett annat ord som finns i
 ordlistan visas det ordet ("Du tänkte på …"), paret sparas och ordet övas i morgon.
 
-**Svit:** varje rätt i rad får en egen kort, ljus melodi (alltid uppåtgående och på en skala som inte skaver), med en löpning var femte gång. 10, 20, 30 … får egna fanfarer och fyrverkerier.
+**Bara repetera:** på startsidan finns ett andra pass utan nya ord. Det tar bara ord du redan har
+börjat med, på 5, 10, 15 eller 20 minuter eller obegränsat. Ett obegränsat pass räknar tiden
+uppåt, tar först dagens repetitioner och fortsätter sedan med extra övning tills du avslutar det.
+Finns inga ord att repetera blir passet extra övning, som inte påverkar schemat.
+
+**Svit:** varje rätt svar låter som ett handpan-ping, var femte (5, 15, 25 …) som ett litet
+ackord, och 10, 20, 30, 40 och 50 i rad firas med Filmmusik som växer för varje nivå (50 och
+högre låter som nivå 5). Ljuden räknas ut av koden i en bakgrundstråd när appen startar, så de
+låter likadana på alla enheter. Ljudlabbet i `ljudlabb/` innehåller alla förslag som valdes bland,
+och `ikoner/` alla förslag på appbild.
 
 ## Publicera på GitHub Pages
 
@@ -76,7 +85,7 @@ Enhetstester (logik, schemaläggning, ljudplan, synk mot en låtsasserver):
 npm test
 ```
 
-Webbläsartester (Playwright; bygger appen och kör fem scenarier: första passet, lyssningsövningar,
+Webbläsartester (Playwright; bygger appen och kör sju scenarier: första passet, lyssningsövningar,
 fel svar och förväxlingar, svit och ordlista). Första gången behövs webbläsaren:
 
 ```bash
@@ -96,7 +105,7 @@ Testerna körs automatiskt för varje pull request och före varje publicering (
 |---|---|
 | `src/srs.ts` | FSRS, färdigheter, omprov, övningsval |
 | `src/session.ts` | passets kö, övningar, rättning, förväxlingar |
-| `src/streak.ts` | ljudplan för svit och milstolpar (ren data, testbar) |
+| `src/sound/` | ljudmotor, handpan-ljudet, Filmmusik och vilket ljud som hör till vilken svit (`plan.ts`) |
 | `src/fx.ts` | ljudmotor, uppläsning, partiklar och fyrverkerier |
 | `src/store.ts`, `src/syncCore.ts`, `src/sync.ts` | lagring, synkkärna och Supabase-koppling |
 | `src/importer.ts` | import av ordlistor och tilläggsfiler, AI-instruktionen |

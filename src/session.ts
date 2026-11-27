@@ -90,8 +90,15 @@ export function buildQueue(snap: Snapshot, now: number): QItem[] {
     const c = snap.cards.get(w.id)
     if (!w.suspended && c?.state === State.New) unfinishedIntros.push(w)
   }
-  const due = dueWords(snap, now).sort((a, b) => snap.cards.get(a.id)!.due - snap.cards.get(b.id)!.due)
   const intros = [...unfinishedIntros, ...freshWords(snap).slice(0, newQuota(snap, now))]
+  return [...intros.map((w): QItem => ({ wordId: w.id, kind: 'intro' })), ...reviewItems(snap, now)].sort(
+    (a, b) => Number(isNewPhase(b)) - Number(isNewPhase(a)),
+  )
+}
+
+/** Dagens repetitioner, mest försenade först. Ord med ett omprov i dag får den övning de gjorde fel på. */
+function reviewItems(snap: Snapshot, now: number): QItem[] {
+  const due = dueWords(snap, now).sort((a, b) => snap.cards.get(a.id)!.due - snap.cards.get(b.id)!.due)
   const reviews: QItem[] = []
   for (const w of due) {
     const c = snap.cards.get(w.id)!
@@ -102,9 +109,23 @@ export function buildQueue(snap: Snapshot, now: number): QItem[] {
     const rest = isDue(c, now) ? retries.slice(1) : retries
     for (const r of rest) reviews.push({ wordId: w.id, kind: 'quiz', force: r.type, retry: true })
   }
-  return [...intros.map((w): QItem => ({ wordId: w.id, kind: 'intro' })), ...reviews].sort(
-    (a, b) => Number(isNewPhase(b)) - Number(isNewPhase(a)),
-  )
+  return reviews
+}
+
+/** Kön för ett repetitionspass: bara ord som ska repeteras, inga nya ord och inga introduktionskort.
+ *  Påbörjade ord som ännu inte är klara kommer först, som i ett vanligt pass. */
+export function buildReviewQueue(snap: Snapshot, now: number): QItem[] {
+  return reviewItems(snap, now).sort((a, b) => Number(isNewPhase(b)) - Number(isNewPhase(a)))
+}
+
+/** Hur många ord som är påbörjade och inte pausade, alltså kan repeteras eller övas extra. */
+export function studiedCount(snap: Snapshot): number {
+  let n = 0
+  for (const w of snap.words.values()) {
+    const c = snap.cards.get(w.id)
+    if (!w.suspended && c && c.state !== State.New) n++
+  }
+  return n
 }
 
 const isNewPhase = (q: QItem) => q.kind === 'intro' || !!q.learning

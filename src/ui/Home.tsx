@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { countDue } from '../session'
+import { countDue, studiedCount } from '../session'
 import { computeStats } from '../stats'
 import { useStore } from '../store'
 import { fx } from '../fx'
@@ -8,11 +8,17 @@ import { setNoListen, useNoListen } from '../prefs'
 import { QuickSettings } from './QuickSettings'
 import { Icon } from './bits'
 
-export function Home({ onStart, onImport }: { onStart: (minutes: number) => void; onImport: () => void }) {
+export function Home({ onStart, onImport }: { onStart: (minutes: number | null, review?: boolean) => void; onImport: () => void }) {
   const snap = useStore()
   const [minutes, setMinutes] = useState(() => Number(localStorage.getItem('minutes')) || 10)
+  // 0 betyder obegränsat.
+  const [repMinutes, setRepMinutes] = useState(() => {
+    const v = localStorage.getItem('repMinutes')
+    return v === null ? 10 : Number(v)
+  })
   const now = Date.now()
   const counts = useMemo(() => countDue(snap, now), [snap])
+  const studied = useMemo(() => studiedCount(snap), [snap])
   const stats = useMemo(() => computeStats(snap, now), [snap])
   const empty = snap.words.size === 0
   const updateReady = useUpdateReady()
@@ -79,6 +85,36 @@ export function Home({ onStart, onImport }: { onStart: (minutes: number) => void
             </label>
             {counts.due + counts.newNow === 0 && (
               <p className="muted small center">Inget är schemalagt just nu – passet blir extra övning som inte påverkar schemat.</p>
+            )}
+          </div>
+          <div className="card" id="repeat">
+            <h2>Bara repetera</h2>
+            <p className="muted small">Repetera ord du redan har börjat med. Inga nya ord.</p>
+            <div className="seg five" role="radiogroup" aria-label="Repetitionspassets längd">
+              {[5, 10, 15, 20, 0].map((m) => (
+                <button
+                  key={m}
+                  role="radio"
+                  aria-checked={repMinutes === m}
+                  className={'seg-item' + (repMinutes === m ? ' active' : '')}
+                  onClick={() => {
+                    setRepMinutes(m)
+                    localStorage.setItem('repMinutes', String(m))
+                    fx.tap()
+                  }}
+                >
+                  <strong>{m === 0 ? '∞' : m}</strong>
+                  <span>{m === 0 ? 'obegr.' : 'min'}</span>
+                </button>
+              ))}
+            </div>
+            <button className="btn primary big" disabled={studied === 0} onClick={() => onStart(repMinutes === 0 ? null : repMinutes, true)}>Repetera</button>
+            {studied === 0 ? (
+              <p className="muted small center">Du har inga påbörjade ord än. Kör ett vanligt pass först.</p>
+            ) : counts.due === 0 ? (
+              <p className="muted small center">Inget ord ska repeteras just nu – passet blir extra övning som inte påverkar schemat.</p>
+            ) : (
+              <p className="muted small center">{counts.due} ord att repetera i dag{repMinutes === 0 ? '. Passet pågår tills du avslutar det.' : '.'}</p>
             )}
           </div>
         </>

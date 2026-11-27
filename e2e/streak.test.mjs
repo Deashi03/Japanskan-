@@ -30,6 +30,15 @@ test('tio rätt i rad ger en milstolpe med egen banderoll', async () => {
   await page.click('.nav-item:nth-of-type(4)')
   for (let i = 0; i < 5; i++) await page.click('[aria-label="Minska Nya ord per pass"]')
   await page.click('.nav-item:nth-of-type(1)')
+  // Håll räkningen på vilka färdiga ljud som spelas (längd i sekunder).
+  await page.evaluate(() => {
+    window.__played = []
+    const start = AudioBufferSourceNode.prototype.start
+    AudioBufferSourceNode.prototype.start = function (...a) {
+      if (this.buffer && this.buffer.duration > 0.8) window.__played.push(+this.buffer.duration.toFixed(2))
+      return start.apply(this, a)
+    }
+  })
   await page.click('text=Starta')
 
   const banners = []
@@ -44,5 +53,9 @@ test('tio rätt i rad ger en milstolpe med egen banderoll', async () => {
   // 5 ger en vanlig banderoll, 10 en milstolpe.
   assert.ok(banners.some((b) => /5 i rad/.test(b) && !b.includes('milestone')), `5 i rad: ${banners}`)
   assert.ok(banners.some((b) => /10 i rad/.test(b) && b.includes('milestone l1')), `10 i rad: ${banners}`)
+  // Ljuden är de utvalda: vanligt svar (handpan, drygt en sekund) och Filmmusik nivå 1 vid 10.
+  const played = await page.evaluate(() => window.__played)
+  assert.ok(played.some((d) => d > 0.9 && d < 1.7), `vanligt rätt-ljud spelades: ${played}`)
+  assert.ok(played.some((d) => d > 3.5), `firandet vid 10 spelades: ${played}`)
   assert.deepEqual(errors, [])
 })

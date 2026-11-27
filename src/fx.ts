@@ -1,5 +1,6 @@
-import { milestoneLevel, planCorrect, type Note } from './streak'
 import { getSnap } from './store'
+import { celebrationTier, milestoneLevel, soundFor, type SoundKey } from './sound/plan'
+import { getRaw, prepareSounds } from './sound/library'
 
 // ---------------------------------------------------------------- Ljud
 
@@ -103,6 +104,7 @@ function unlock() {
     const session = (navigator as unknown as { audioSession?: { type: string } }).audioSession
     if (session && session.type !== 'playback') session.type = 'playback'
     engine ??= build()
+    prepareSounds()
     const { ctx } = engine
     if (ctx.state !== 'running') {
       void ctx.resume()
@@ -309,81 +311,31 @@ const note = (semi: number) => 523.25 * Math.pow(2, semi / 12)
 /** Skalsteg nummer i, uppåt över oktaverna. */
 const deg = (i: number) => note(PENTA[((i % 5) + 5) % 5] + 12 * Math.floor(i / 5))
 
-// ---------------------------------------------------------------- Fler instrument
+// ---------------------------------------------------------------- Förrenderade ljud
 
-/** Kalimba: en kort, rund ton med en ostämd överton som klingar av fort. */
-function kalimba(freq: number, start: number, dur = 0.7, gain = 0.28) {
-  tone(freq, start, dur, { gain, attack: 0.002 })
-  tone(freq * 6.27, start, dur * 0.14, { gain: gain * 0.3, attack: 0.001 })
-  noise(start, 0.012, { from: Math.min(freq * 4, 7000), gain: gain * 0.2, q: 1.5 })
-}
+const decoded = new Map<SoundKey, AudioBuffer>()
 
-/** Pad: tre svagt avstämda toner med mjukt anslag – ger ackordet kropp utan att ta plats. */
-function pad(freq: number, start: number, dur = 1.2, gain = 0.1) {
-  for (const f of [freq * 0.996, freq, freq * 1.004]) tone(f, start, dur, { gain: gain / 1.6, attack: 0.22, type: 'sine' })
-}
-
-/** Horn: tre sågtandstoner genom ett filter som öppnar sig vid anslaget, som ett blåsinstrument. */
-function horn(freq: number, start: number, dur = 0.6, gain = 0.18) {
+/** Spelar ett färdigt ljud (rätt svar, femte i rad, firande). Returnerar false om ljudet inte
+ *  hunnit räknas ut än. */
+function playSound(key: SoundKey): boolean {
   const e = audio()
-  if (!e) return
-  const t = e.ctx.currentTime + start
-  const lp = e.ctx.createBiquadFilter()
-  lp.type = 'lowpass'
-  lp.Q.value = 1.6
-  lp.frequency.setValueAtTime(500, t)
-  lp.frequency.exponentialRampToValueAtTime(2600, t + 0.05)
-  lp.frequency.exponentialRampToValueAtTime(1300, t + Math.max(0.1, dur))
+  if (!e) return true
+  const raw = getRaw(key)
+  if (!raw) return false
+  let buffer = decoded.get(key)
+  if (!buffer) {
+    buffer = e.ctx.createBuffer(2, raw.L.length, raw.sr)
+    buffer.copyToChannel(raw.L, 0)
+    buffer.copyToChannel(raw.R, 1)
+    decoded.set(key, buffer)
+  }
+  const src = e.ctx.createBufferSource()
+  src.buffer = buffer
   const g = e.ctx.createGain()
-  const peak = gain / 2.4
-  g.gain.setValueAtTime(0.0001, t)
-  g.gain.exponentialRampToValueAtTime(peak, t + 0.04)
-  g.gain.setValueAtTime(peak * 0.85, t + Math.max(0.05, dur - 0.14))
-  g.gain.exponentialRampToValueAtTime(0.0001, t + dur)
-  lp.connect(g)
-  g.connect(e.out)
-  const send = e.ctx.createGain()
-  send.gain.value = 0.7
-  g.connect(send).connect(e.wet)
-  for (const detune of [-7, 0, 7]) {
-    const o = e.ctx.createOscillator()
-    o.type = 'sawtooth'
-    o.frequency.value = freq
-    o.detune.value = detune
-    o.connect(lp)
-    o.start(t)
-    o.stop(t + dur + 0.05)
-  }
-}
-
-/** Puka: en sinuston som sjunker i tonhöjd, plus en dov duns. */
-function timpani(freq: number, start: number, dur = 0.6, gain = 0.3) {
-  tone(freq, start, dur, { gain, attack: 0.004, slideTo: freq * 0.62, wet: 0.5 })
-  noise(start, 0.09, { from: 220, gain: gain * 0.7, type: 'lowpass', q: 0.7 })
-}
-
-/** Cymbal: brus som sväller upp och klingar av. */
-function cymbal(start: number, dur = 0.8, gain = 0.05) {
-  noise(start, dur, { from: 6500, type: 'highpass', q: 0.5, gain, attack: dur * 0.55 })
-}
-
-/** Spelar en not ur en ljudplan med rätt instrument. */
-function play(n: Note) {
-  const f = note(n.semi)
-  switch (n.voice) {
-    case 'mallet': return mallet(f, n.at, n.dur, n.gain)
-    case 'kalimba': return kalimba(f, n.at, n.dur, n.gain)
-    case 'bell': return bell(f, n.at, n.dur, n.gain)
-    // Höga harptoner klingar av fort och blir svaga, låga klingar länge och blir starka: nivån
-    // jämnas ut efter tonhöjd så att harpan låter lika stark i alla lägen.
-    case 'harp': return harp(f, n.at, n.gain * (0.85 + 0.95 * Math.min(1, Math.max(0, (n.semi + 12) / 12))))
-    case 'pad': return pad(f, n.at, n.dur, n.gain)
-    case 'bass': return bass(f, n.at, n.dur, n.gain)
-    case 'horn': return horn(f, n.at, n.dur, n.gain)
-    case 'timpani': return timpani(f, n.at, n.dur, n.gain)
-    case 'cymbal': return cymbal(n.at, n.dur, n.gain)
-    case 'sparkle': return sparkle(f, n.at, 3, n.gain)
-  }
+  g.gain.value = 0.9
+  src.connect(g).connect(e.ctx.destination)
+  src.start(e.ctx.currentTime)
+  return true
 }
 
 /** Renderar ljud offline till ljudspår (vänster, höger) utan att något spelas upp. Används för
@@ -402,12 +354,15 @@ export async function renderOffline(seconds: number, schedule: () => void, sampl
 }
 
 export const fx = {
-  /** Rätt svar. `n` är hur många rätt i rad det här var (1 för det första). Melodin rör sig i
-   *  mellanregistret över växlande ackord och instrument, så att inga två svar i rad låter
-   *  likadant och tonläget inte klättrar. Var femte svar får en löpning, och 10, 20, 30 …
-   *  får en egen fanfar som växer för varje milstolpe. */
+  /** Rätt svar. `n` är hur många rätt i rad det här var (1 för det första). Vanliga svar låter
+   *  som ett handpan-ping, var femte som ett större ackord, och 10, 20, 30, 40, 50 … firas med
+   *  Filmmusik som växer för varje nivå (se src/sound/plan.ts). */
   correct(n = 1) {
-    planCorrect(n).forEach(play)
+    if (!playSound(soundFor(n))) {
+      // Ljuden räknas ut i bakgrunden; är de inte klara än får det första svaret en enkel ton.
+      mallet(note(0), 0, 0.5, 0.2)
+      mallet(note(7), 0.09, 0.6, 0.2)
+    }
     const level = milestoneLevel(n)
     vibrate(level ? [20, 40, 20, 40, 80] : n % 5 === 0 ? [15, 40, 25] : 15)
   },
@@ -756,6 +711,7 @@ export function celebrate() {
 export function streakFireworks(n: number) {
   const level = milestoneLevel(n)
   if (!level) return
+  const tier = celebrationTier(n)
   const lag = lagMs()
   const at = (seconds: number, run: () => void) => setTimeout(run, seconds * 1000 + lag)
   const GOLD = ['#ffd60a', '#ffe98a', '#ffffff', '#f5a524']
@@ -763,17 +719,19 @@ export function streakFireworks(n: number) {
   const MINT = ['#3fbf7c', '#8fe3b6', '#ffffff', '#6ea8ff']
   const SKY = ['#6ea8ff', '#b7d2ff', '#ffffff', '#c58af0']
   const power = 1 + Math.min(level, 6) * 0.12
-  at(0.18, () => firework(0.5, 0.3, GOLD, 40 + level * 6, power))
-  if (level >= 2) at(0.3, () => firework(0.22, 0.26, ROSE, 36, power))
-  if (level >= 2) at(0.36, () => firework(0.78, 0.26, MINT, 36, power))
-  if (level >= 3) at(0.5, () => confetti())
-  if (level >= 4) at(0.6, () => firework(0.5, 0.18, SKY, 60, power * 1.2))
+  // Filmmusiken bygger upp med stråkar och slår till efter 0,45 s + 0,08 s per nivå.
+  const hit = 0.45 + 0.08 * tier
+  at(hit, () => firework(0.5, 0.3, GOLD, 40 + level * 6, power))
+  if (level >= 2) at(hit + 0.1, () => firework(0.22, 0.26, ROSE, 36, power))
+  if (level >= 2) at(hit + 0.16, () => firework(0.78, 0.26, MINT, 36, power))
+  if (level >= 3) at(hit + 0.3, () => confetti())
+  if (level >= 4) at(hit + 0.4, () => firework(0.5, 0.18, SKY, 60, power * 1.2))
   if (level >= 5) {
-    at(1.1, () => firework(0.3, 0.4, GOLD, 50, power))
-    at(1.2, () => firework(0.7, 0.4, ROSE, 50, power))
-    at(1.5, () => firework(0.5, 0.3, [...GOLD, ...ROSE, ...MINT, ...SKY], 110, power * 1.4))
+    at(hit + 0.9, () => firework(0.3, 0.4, GOLD, 50, power))
+    at(hit + 1.0, () => firework(0.7, 0.4, ROSE, 50, power))
+    at(hit + 1.3, () => firework(0.5, 0.3, [...GOLD, ...ROSE, ...MINT, ...SKY], 110, power * 1.4))
   }
-  if (level >= 10) at(1.8, () => rain(110))
+  if (level >= 10) at(hit + 1.6, () => rain(110))
 }
 
 // ---------------------------------------------------------------- Tema

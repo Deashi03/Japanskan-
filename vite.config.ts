@@ -8,7 +8,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'prompt',
-      includeAssets: ['icon.svg', 'apple-touch-icon.png'],
+      includeAssets: ['icon.svg', 'apple-touch-icon.png', 'icon-maskable-512.png'],
       manifest: {
         name: 'Japanskan',
         short_name: 'Japanskan',
@@ -18,11 +18,11 @@ export default defineConfig({
         start_url: '.',
         scope: '.',
         background_color: '#fbf7f2',
-        theme_color: '#e5484d',
+        theme_color: '#2f52a5',
         icons: [
           { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
           { src: 'icon-512.png', sizes: '512x512', type: 'image/png' },
-          { src: 'icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+          { src: 'icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
         ],
       },
     }),

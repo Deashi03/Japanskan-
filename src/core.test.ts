@@ -3,10 +3,9 @@ import { describe, expect, it } from 'vitest'
 import { parseWordFile, splitDuplicates } from './importer'
 import { autoRating, clearRetry, dueRetries, exercisesFor, isDue, isProblem, knownCard, LEARNING_ORDER, missingSkills, REVIEW_ORDER, newCard, pickExercise, Rating, schedule, State, statusOf, withRetry } from './srs'
 import { dayIndex, dayStart, endOfDay } from './days'
-import { afterIntro, buildExercise, buildQueue, checkReading, checkSwedish, extraQueue, findConfusion, freshWords, hintFor, meaningPrompt, nextFresh, overtimeQueue, pickExample, remainingReviews, shortMeaning, newQuota, requeue, type QItem } from './session'
+import { afterIntro, buildExercise, buildQueue, buildReviewQueue, studiedCount, checkReading, checkSwedish, extraQueue, findConfusion, freshWords, hintFor, meaningPrompt, nextFresh, overtimeQueue, pickExample, remainingReviews, shortMeaning, newQuota, requeue, type QItem } from './session'
 import { dayKey, streaks } from './stats'
 import { isDark } from './fx'
-import { MAX_SEMI, milestoneLevel, planCorrect, planLength, planMilestone, signature } from './streak'
 import { furigana } from './furigana'
 import type { Snapshot } from './store'
 import { DEFAULT_SETTINGS, type CardData, type Word } from './types'
@@ -226,6 +225,26 @@ describe('session', () => {
     const q = buildQueue(snap, NOW)
     expect(q.slice(0, 5)).toEqual([0, 1, 2, 3, 4].map((i) => ({ wordId: 'w' + i, kind: 'intro' })))
     expect(q.slice(5)).toEqual([{ wordId: 'w11', kind: 'quiz', learning: undefined }, { wordId: 'w10', kind: 'quiz', learning: undefined }])
+  })
+  it('ett repetitionspass har bara repetitioner: inga nya ord och inga introduktionskort', () => {
+    const review = (due: number): CardData => ({ ...newCard(NOW - 10 * DAY), state: State.Review, due })
+    const snap = snapOf(words, [['w10', review(NOW - DAY)], ['w11', review(NOW - 3 * DAY)], ['w9', review(NOW + DAY)]])
+    expect(buildReviewQueue(snap, NOW)).toEqual([{ wordId: 'w11', kind: 'quiz', learning: undefined }, { wordId: 'w10', kind: 'quiz', learning: undefined }])
+    expect(buildReviewQueue(snap, NOW).some((q) => q.kind === 'intro')).toBe(false)
+    // Utan förfallna ord är kön tom (passet blir då extra övning).
+    expect(buildReviewQueue(snapOf(words), NOW)).toEqual([])
+    // Ett påbörjat ord som inte hunnit bli klart kommer före vanliga repetitioner.
+    const learning: CardData = { ...newCard(NOW - DAY), state: State.Learning, due: NOW - 1000 }
+    const mixed = buildReviewQueue(snapOf(words, [['w10', review(NOW - DAY)], ['w5', learning]]), NOW)
+    expect(mixed.map((q) => q.wordId)).toEqual(['w5', 'w10'])
+  })
+  it('studiedCount räknar påbörjade ord som inte är pausade', () => {
+    const snap = snapOf([word(0), word(1, { suspended: true }), word(2), word(3)], [
+      ['w0', { ...newCard(NOW), state: State.Review, due: NOW + DAY }],
+      ['w1', { ...newCard(NOW), state: State.Review, due: NOW + DAY }],
+      ['w2', newCard(NOW)],
+    ])
+    expect(studiedCount(snap)).toBe(1)
   })
   it('ord man valt själv introduceras före alla andra, i den ordning de valdes', () => {
     const list = words.map((w) => (w.id === 'w9' ? { ...w, priority: 200 } : w.id === 'w7' ? { ...w, priority: 100 } : w))
@@ -474,68 +493,6 @@ describe('streak och tema', () => {
     expect(isDark('dark', '', '')).toBe(true)
   })
 })
-
-describe('ljud för rätt svar i rad', () => {
-  const melody = (n: number) => planCorrect(n).filter((p) => ['mallet', 'kalimba', 'bell', 'harp'].includes(p.voice) && p.gain >= 0.25)
-  const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length
-
-  const ordinary = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => i + from).filter((n) => !milestoneLevel(n))
-  const SCALE = new Set([0, 2, 4, 7, 9, 12, 14, 16, 19])
-
-  it('tonläget klättrar inte med sviten och ligger i mellanregistret', () => {
-    for (const n of ordinary(1, 200)) {
-      for (const p of planCorrect(n)) {
-        expect(p.semi).toBeLessThanOrEqual(MAX_SEMI)
-        expect(p.semi).toBeGreaterThanOrEqual(0)
-      }
-    }
-    const avg = (from: number, to: number) => mean(ordinary(from, to).flatMap((n) => melody(n).map((p) => p.semi)))
-    expect(Math.abs(avg(1, 19) - avg(101, 119))).toBeLessThan(1.5)
-    expect(Math.abs(avg(1, 19) - avg(41, 59))).toBeLessThan(1.5)
-  })
-  it('låter alltid positivt: bara durpentatoniska toner, stigande melodi som slutar på en stabil ton', () => {
-    for (const n of ordinary(1, 300)) {
-      const plan = planCorrect(n)
-      for (const p of plan) expect(SCALE.has(p.semi)).toBe(true)
-      const m = melody(n).sort((a, b) => a.at - b.at)
-      for (let i = 1; i < m.length; i++) expect(m[i].semi).toBeGreaterThan(m[i - 1].semi)
-      expect([0, 4, 7]).toContain(m[m.length - 1].semi % 12)
-      // Inga låga eller mörka klanger i vanliga svar.
-      expect(plan.some((p) => ['bass', 'pad', 'timpani', 'horn'].includes(p.voice))).toBe(false)
-    }
-  })
-  it('två rätt i rad låter aldrig likadant och instrumenten växlar', () => {
-    for (let n = 1; n < 120; n++) expect(signature(planCorrect(n))).not.toBe(signature(planCorrect(n + 1)))
-    const voices = new Set(ordinary(1, 16).map((n) => melody(n)[0].voice))
-    expect(voices.size).toBe(3)
-    expect(new Set(Array.from({ length: 24 }, (_, i) => signature(planCorrect(i + 1)))).size).toBeGreaterThanOrEqual(23)
-  })
-  it('10, 20, 30 … är milstolpar som växer, med lager som tillkommer', () => {
-    expect(milestoneLevel(9)).toBe(0)
-    expect([10, 20, 30, 100].map(milestoneLevel)).toEqual([1, 2, 3, 10])
-    const lens = [1, 2, 3, 4, 5, 6].map((l) => planCorrect(l * 10).length)
-    for (let i = 1; i < lens.length; i++) expect(lens[i]).toBeGreaterThanOrEqual(lens[i - 1])
-    expect(lens[2]).toBeGreaterThan(lens[0] + 5)
-    const voicesAt = (l: number) => new Set(planCorrect(l * 10).map((p) => p.voice))
-    expect(voicesAt(1).has('harp')).toBe(false)
-    expect(voicesAt(2).has('harp')).toBe(true)
-    expect(voicesAt(3).has('timpani')).toBe(true)
-    expect(voicesAt(4).has('pad')).toBe(true)
-    // Varje milstolpe låter olika, och fanfaren blir längre.
-    const sigs = [1, 2, 3, 4, 5, 6, 7, 8].map((l) => signature(planMilestone(l)))
-    expect(new Set(sigs).size).toBe(8)
-    expect(planLength(planMilestone(5))).toBeGreaterThan(planLength(planMilestone(1)))
-    // Ett vanligt rätt svar är kort; en milstolpe tar plats.
-    expect(planLength(planCorrect(7))).toBeLessThan(1.3)
-  })
-  it('var femte svar har en löpning, men 10 är en milstolpe i stället', () => {
-    const run = (n: number) => planCorrect(n).filter((p) => p.voice === 'mallet').length
-    expect(run(5)).toBeGreaterThan(run(4) + 3)
-    expect(planCorrect(10).some((p) => p.voice === 'horn')).toBe(true)
-    expect(planCorrect(5).some((p) => p.voice === 'horn')).toBe(false)
-  })
-})
-
 
 describe('exempelval och förväxlingar', () => {
   it('exempelmeningens svårighet följer hur väl ordet sitter', () => {
