@@ -1,6 +1,5 @@
 import { getSnap } from './store'
-import { celebrationTier, milestoneLevel, soundFor, type SoundKey } from './sound/plan'
-import { getRaw, prepareSounds } from './sound/library'
+import { milestoneLevel, streakTier } from './streak'
 
 // ---------------------------------------------------------------- Ljud
 
@@ -104,7 +103,6 @@ function unlock() {
     const session = (navigator as unknown as { audioSession?: { type: string } }).audioSession
     if (session && session.type !== 'playback') session.type = 'playback'
     engine ??= build()
-    prepareSounds()
     const { ctx } = engine
     if (ctx.state !== 'running') {
       void ctx.resume()
@@ -311,32 +309,27 @@ const note = (semi: number) => 523.25 * Math.pow(2, semi / 12)
 /** Skalsteg nummer i, uppåt över oktaverna. */
 const deg = (i: number) => note(PENTA[((i % 5) + 5) % 5] + 12 * Math.floor(i / 5))
 
-// ---------------------------------------------------------------- Förrenderade ljud
-
-const decoded = new Map<SoundKey, AudioBuffer>()
-
-/** Spelar ett färdigt ljud (rätt svar, femte i rad, firande). Returnerar false om ljudet inte
- *  hunnit räknas ut än. */
-function playSound(key: SoundKey): boolean {
-  const e = audio()
-  if (!e) return true
-  const raw = getRaw(key)
-  if (!raw) return false
-  let buffer = decoded.get(key)
-  if (!buffer) {
-    buffer = e.ctx.createBuffer(2, raw.L.length, raw.sr)
-    buffer.copyToChannel(raw.L, 0)
-    buffer.copyToChannel(raw.R, 1)
-    decoded.set(key, buffer)
-  }
-  const src = e.ctx.createBufferSource()
-  src.buffer = buffer
-  const g = e.ctx.createGain()
-  g.gain.value = 0.9
-  src.connect(g).connect(e.ctx.destination)
-  src.start(e.ctx.currentTime)
-  return true
-}
+// Små melodier (i skalsteg räknat från grundtonen) som turas om, så att två rätt
+// i rad aldrig låter likadant.
+const MOTIFS = [
+  [0, 2],
+  [0, 3],
+  [1, 3],
+  [0, 2, 4],
+  [2, 4],
+  [0, 1, 3],
+  [3, 1, 4],
+  [0, 2, 3, 5],
+  [4, 2, 5],
+  [0, 4],
+]
+// Avslutningar vid var femte rätt, en ny för varje nivå.
+const FLOURISH = [
+  [0, 2, 4, 5],
+  [5, 4, 2, 5, 7],
+  [0, 2, 4, 5, 7, 9],
+  [4, 5, 7, 5, 7, 9, 10],
+]
 
 /** Renderar ljud offline till ljudspår (vänster, höger) utan att något spelas upp. Används för
  *  att mäta ljuden – toppnivå, tonläge, variation – och för att göra ljudprov. */
@@ -354,17 +347,39 @@ export async function renderOffline(seconds: number, schedule: () => void, sampl
 }
 
 export const fx = {
-  /** Rätt svar. `n` är hur många rätt i rad det här var (1 för det första). Vanliga svar låter
-   *  som ett handpan-ping, var femte som ett större ackord, och 10, 20, 30, 40, 50 … firas med
-   *  Filmmusik som växer för varje nivå (se src/sound/plan.ts). */
+  /** Rätt svar. `n` är hur många rätt i rad det här var (1 för det första). Varje rätt i rad får
+   *  en egen liten melodi, och ljudet växer med sviten: klockor, stämmor, bas och eko kommer till
+   *  nivå för nivå. Var femte rätt avslutas med en löpning. I en lång svit stannar ljudet inte
+   *  på den högsta nivån utan går i vågor (se streakTier), så att det fortsätter att förändras. */
   correct(n = 1) {
-    if (!playSound(soundFor(n))) {
-      // Ljuden räknas ut i bakgrunden; är de inte klara än får det första svaret en enkel ton.
-      mallet(note(0), 0, 0.5, 0.2)
-      mallet(note(7), 0.09, 0.6, 0.2)
+    const combo = Math.max(0, Math.floor(n) - 1)
+    const tier = streakTier(combo)
+    const root = (combo % 5) + tier
+    const motif = MOTIFS[(combo * 3 + tier) % MOTIFS.length]
+    const step = tier >= 2 ? 0.07 : 0.085
+    motif.forEach((d, i) => {
+      const last = i === motif.length - 1
+      const t = i * step
+      mallet(deg(root + d), t, last ? 0.6 : 0.4, 0.3)
+      if (tier >= 1 && last) bell(deg(root + d + 5), t + 0.02, 0.9, 0.09)
+      if (tier >= 2) mallet(deg(root + d - 2), t, last ? 0.5 : 0.32, 0.14)
+      if (tier >= 4) mallet(deg(root + d + 5), t + 0.16, 0.3, 0.07)
+    })
+    const end = (motif.length - 1) * step
+    if (tier >= 3) bass(deg(root - 10), 0, 0.55, 0.2)
+    sparkle(deg(root + motif[motif.length - 1] + 10), end + 0.04, 2 + Math.min(tier, 3), 0.04)
+
+    const fifth = combo > 0 && (combo + 1) % 5 === 0
+    if (fifth) {
+      const run = FLOURISH[Math.min(tier, FLOURISH.length - 1)]
+      run.forEach((d, i) => mallet(deg(root + d), end + 0.16 + i * 0.06, 0.45, 0.2))
+      const top = end + 0.16 + run.length * 0.06
+      ;[0, 2, 4].forEach((d) => bell(deg(root + d + 5), top, 1.2, 0.08))
+      bass(deg(root - 10), top, 0.9, 0.18)
+      sparkle(deg(root + 12), top + 0.05, 5, 0.06)
+      noise(top - 0.05, 0.4, { from: 2500, to: 8000, gain: 0.03 })
     }
-    const level = milestoneLevel(n)
-    vibrate(level ? [20, 40, 20, 40, 80] : n % 5 === 0 ? [15, 40, 25] : 15)
+    vibrate(fifth ? [15, 40, 25] : 15)
   },
   /** Fel svar – mjuk, dov och kort, så att det inte känns som ett straff. */
   wrong() {
@@ -711,7 +726,6 @@ export function celebrate() {
 export function streakFireworks(n: number) {
   const level = milestoneLevel(n)
   if (!level) return
-  const tier = celebrationTier(n)
   const lag = lagMs()
   const at = (seconds: number, run: () => void) => setTimeout(run, seconds * 1000 + lag)
   const GOLD = ['#ffd60a', '#ffe98a', '#ffffff', '#f5a524']
@@ -719,8 +733,8 @@ export function streakFireworks(n: number) {
   const MINT = ['#3fbf7c', '#8fe3b6', '#ffffff', '#6ea8ff']
   const SKY = ['#6ea8ff', '#b7d2ff', '#ffffff', '#c58af0']
   const power = 1 + Math.min(level, 6) * 0.12
-  // Filmmusiken bygger upp med stråkar och slår till efter 0,45 s + 0,08 s per nivå.
-  const hit = 0.45 + 0.08 * tier
+  // Löpningen vid var femte rätt når sin topp efter ungefär en halv sekund.
+  const hit = 0.5
   at(hit, () => firework(0.5, 0.3, GOLD, 40 + level * 6, power))
   if (level >= 2) at(hit + 0.1, () => firework(0.22, 0.26, ROSE, 36, power))
   if (level >= 2) at(hit + 0.16, () => firework(0.78, 0.26, MINT, 36, power))

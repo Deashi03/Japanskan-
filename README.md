@@ -41,11 +41,11 @@ börjat med, på 5, 10, 15 eller 20 minuter eller obegränsat. Ett obegränsat p
 uppåt, tar först dagens repetitioner och fortsätter sedan med extra övning tills du avslutar det.
 Finns inga ord att repetera blir passet extra övning, som inte påverkar schemat.
 
-**Svit:** varje rätt svar låter som ett handpan-ping, var femte (5, 15, 25 …) som ett litet
-ackord, och 10, 20, 30, 40 och 50 i rad firas med Filmmusik som växer för varje nivå (50 och
-högre låter som nivå 5). Ljuden räknas ut av koden i en bakgrundstråd när appen startar, så de
-låter likadana på alla enheter. Ljudlabbet i `ljudlabb/` innehåller alla förslag som valdes bland,
-och `ikoner/` alla förslag på appbild.
+**Svit:** varje rätt i rad får en egen liten melodi. Ljudet växer med sviten (klockor, stämmor,
+bas och eko kommer till var femte rätt), och var femte rätt avslutas med en löpning. I en lång
+svit stannar ljudet inte på den högsta nivån utan går i vågor, så att det fortsätter att
+förändras. 10, 20, 30 … får fyrverkerier på skärmen. Ljudförslagen från 0.10 ligger kvar i
+`ljudlabb/` men används inte av appen, och `ikoner/` innehåller alla förslag på appbild.
 
 ## Publicera på GitHub Pages
 
@@ -105,7 +105,7 @@ Testerna körs automatiskt för varje pull request och före varje publicering (
 |---|---|
 | `src/srs.ts` | FSRS, färdigheter, omprov, övningsval |
 | `src/session.ts` | passets kö, övningar, rättning, förväxlingar |
-| `src/sound/` | ljudmotor, handpan-ljudet, Filmmusik och vilket ljud som hör till vilken svit (`plan.ts`) |
+| `src/streak.ts` | ljudets nivå efter svitens längd (ren logik, testbar) |
 | `src/fx.ts` | ljudmotor, uppläsning, partiklar och fyrverkerier |
 | `src/store.ts`, `src/syncCore.ts`, `src/sync.ts` | lagring, synkkärna och Supabase-koppling |
 | `src/importer.ts` | import av ordlistor och tilläggsfiler, AI-instruktionen |
