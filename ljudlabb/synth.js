@@ -313,6 +313,83 @@ export function reverb(x, { room = 0.8, damp = 0.4 } = {}) {
   return [chan(0), chan(23)]
 }
 
+
+// --- ren efterklang: faltning med ett utklingande, mörknande brus -------------------------
+
+function fftInPlace(re, im, inverse) {
+  const n = re.length
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1
+    for (; j & bit; bit >>= 1) j ^= bit
+    j ^= bit
+    if (i < j) { let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t }
+  }
+  for (let l = 2; l <= n; l <<= 1) {
+    const a = ((inverse ? 2 : -2) * Math.PI) / l
+    const wr = Math.cos(a)
+    const wi = Math.sin(a)
+    for (let i = 0; i < n; i += l) {
+      let cr = 1
+      let ci = 0
+      for (let k = 0; k < l / 2; k++) {
+        const ur = re[i + k], ui = im[i + k]
+        const vr = re[i + k + l / 2] * cr - im[i + k + l / 2] * ci
+        const vi = re[i + k + l / 2] * ci + im[i + k + l / 2] * cr
+        re[i + k] = ur + vr; im[i + k] = ui + vi
+        re[i + k + l / 2] = ur - vr; im[i + k + l / 2] = ui - vi
+        const t = cr * wr - ci * wi
+        ci = cr * wi + ci * wr
+        cr = t
+      }
+    }
+  }
+  if (inverse) for (let i = 0; i < n; i++) { re[i] /= n; im[i] /= n }
+}
+
+/** Faltar x med h (FFT) och returnerar lika många sampel som x. */
+export function convolve(x, h) {
+  let N = 1
+  while (N < x.length + h.length) N <<= 1
+  const ar = new Float64Array(N), ai = new Float64Array(N), br = new Float64Array(N), bi = new Float64Array(N)
+  ar.set(x)
+  br.set(h)
+  fftInPlace(ar, ai, false)
+  fftInPlace(br, bi, false)
+  for (let i = 0; i < N; i++) {
+    const r = ar[i] * br[i] - ai[i] * bi[i]
+    ai[i] = ar[i] * bi[i] + ai[i] * br[i]
+    ar[i] = r
+  }
+  fftInPlace(ar, ai, true)
+  const out = new Float32Array(x.length)
+  for (let i = 0; i < x.length; i++) out[i] = ar[i]
+  return out
+}
+
+/** Impulssvar för en liten, jämn "platta": brus som klingar ut och mörknar med tiden. Till
+ *  skillnad från Freeverb har det inga kamfilter och därför ingen metallisk ringning. */
+export function makeIR({ t60 = 0.5, dark = 0.5, pre = 0.004, seed = 1 } = {}) {
+  const n = len(t60 * 1.15 + pre)
+  const p = Math.round(pre * SR)
+  return [0, 1].map((ch) => {
+    const r = rng(seed + ch * 101)
+    const ir = new Float32Array(n)
+    let y = 0
+    for (let i = p; i < n; i++) {
+      const t = (i - p) / SR
+      const env = Math.exp((-6.9078 * t) / t60)
+      const a = (0.85 - 0.8 * Math.min(1, t / t60)) * dark + 0.03
+      y += a * ((r() * 2 - 1) * env - y)
+      ir[i] = y * Math.min(1, t / 0.006)
+    }
+    let e = 0
+    for (let i = 0; i < n; i++) e += ir[i] * ir[i]
+    const g = 1 / Math.sqrt(e)
+    for (let i = 0; i < n; i++) ir[i] *= g
+    return ir
+  })
+}
+
 /** Mixer: lägger ljud på en tidslinje med volym, panorering och mängd efterklang. */
 export class Mix {
   constructor(seconds = 3) {
@@ -347,8 +424,52 @@ export class Mix {
     }
     this.end = Math.max(this.end, s + buf.length)
   }
+
+  /** Ren avslutning för korta gränssnittsljud: lätt högpass och lågpass, en mjuk platta som
+   *  efterklang och samma volymjämkning som finish. */
+  finishClean({ wet = 0.15, target = -22, window = 0.5, peak = 0.95, hp = 150, lp = 11000, t60 = 0.45, dark = 0.5, seed = 1 }) {
+    const tail = Math.round(SR * (t60 * 1.15 + 0.05))
+    const n = this.end + tail
+    this.grow(n)
+    const cut = (a) => {
+      let x = a.slice(0, n)
+      if (hp) x = biquad(x, 'hp', hp, 0.707)
+      if (lp) x = biquad(x, 'lp', lp, 0.707)
+      return x
+    }
+    let L = cut(this.L)
+    let R = cut(this.R)
+    const send = cut(this.S)
+    const [il, ir2] = makeIR({ t60, dark, seed })
+    const wl = convolve(send, il)
+    const wr = convolve(send, ir2)
+    for (let i = 0; i < n; i++) { L[i] += wl[i] * wet; R[i] += wr[i] * wet }
+    return this.normalise(L, R, { target, window, peak })
+  }
+  /** Trimmar tystnaden, jämnar volymen (RMS över fönstret), begränsar toppar och fasar ut. */
+  normalise(L, R, { target, window, peak }) {
+    let last = L.length - 1
+    while (last > 0 && Math.abs(L[last]) < 3e-4 && Math.abs(R[last]) < 3e-4) last--
+    const m = Math.min(L.length, last + 1 + Math.round(0.05 * SR))
+    L = L.slice(0, m)
+    R = R.slice(0, m)
+    const w = Math.min(m, Math.round(window * SR))
+    let e = 0
+    for (let i = 0; i < w; i++) e += (L[i] * L[i] + R[i] * R[i]) / 2
+    const gain = dB(target) / (Math.sqrt(e / w) || 1)
+    const lim = (v) => {
+      v *= gain
+      const a = Math.abs(v)
+      return a < 0.7 ? v : Math.sign(v) * (0.7 + (peak - 0.7) * Math.tanh((a - 0.7) / (peak - 0.7)))
+    }
+    for (let i = 0; i < m; i++) { L[i] = lim(L[i]); R[i] = lim(R[i]) }
+    fade(L, 0.001, 0.05)
+    fade(R, 0.001, 0.05)
+    return { L, R, sr: SR, dur: m / SR }
+  }
   /** Lägger på efterklang, jämnar ut volymen, begränsar toppar och trimmar tystnaden. */
-  finish({ wet = 0.25, room = 0.8, damp = 0.4, target = -22, window = 0.7, peak = 0.95 } = {}) {
+  finish({ wet = 0.25, room = 0.8, damp = 0.4, target = -22, window = 0.7, peak = 0.95, ir = null, hp = 0, lp = 0 } = {}) {
+    if (ir) return this.finishClean({ wet, target, window, peak, hp, lp, ...ir })
     const tail = Math.round(SR * (0.4 + room * 1.6))
     const n = this.end + tail
     this.grow(n)

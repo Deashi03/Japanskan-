@@ -71,6 +71,8 @@
   .bar-text { flex: 1; min-width: 200px; font-size: 0.9rem; }
   .bar-text b { font-weight: 600; }
   .stop { color: var(--hot); }
+  .sum { font: 600 1.3rem var(--font-head); margin-top: 40px; cursor: pointer; }
+  details[open] .sum { margin-bottom: 8px; }
   .note { color: var(--muted); font-size: 0.85rem; max-width: 62ch; }
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
@@ -80,13 +82,15 @@
   <p class="lead">Tryck dig igenom ljuden och välj ett vanligt rätt-ljud och en grupp firanden. Säg sedan numren till mig, eller tryck på Kopiera längst ner.</p>
   <p class="note">Ljuden skapas i din webbläsare när du trycker. Sätt på ljudet och stäng av tyst läge på iPhone, annars hörs ingenting.</p>
 
-  <h2>1. Rätt-ljud, 25 förslag</h2>
-  <p class="sub">Varje förslag har ett ljud för vanliga rätt svar och en större variant för femte, femtonde, tjugofemte i rad (och så vidare, utom 10, 20, 30 som firas av gruppen nedan). Knappen "I följd" spelar fyra vanliga svar och sedan det femte, så som det låter i ett pass.</p>
+  <h2>1. Rätt-ljud, 20 nya förslag</h2>
+  <p class="sub">Omgjorda från grunden: exakt stämda toner med rena övertoner, inget brus och en mycket liten, mjuk efterklang. Varje förslag har ett ljud för vanliga rätt svar och en större variant för femte, femtonde, tjugofemte i rad. "I följd" spelar fyra vanliga svar och sedan det femte.</p>
   <div class="grid" id="ok"></div>
 
-  <h2>2. Firanden, 10 grupper</h2>
+  <details>
+  <summary class="sum">2. Firanden för 10, 20, 30 … (du har valt Filmmusik)</summary>
   <p class="sub">Varje grupp har ett eget tema och fem nivåer som växer. 10 i rad ger nivå 1, 20 nivå 2, 30 nivå 3, 40 nivå 4 och 50 eller fler nivå 5. "Alla nivåer" spelar dem efter varandra.</p>
   <div class="grid" id="groups"></div>
+  </details>
 </main>
 
 <div class="bar">
@@ -105,8 +109,8 @@
   let ctx = null
   let live = []
   const cache = new Map()
-  const choice = { ok: null, group: null }
-  try { Object.assign(choice, JSON.parse(localStorage.getItem('ljudval') || '{}')) } catch {}
+  const choice = { ok: null, group: 5 }
+  try { Object.assign(choice, JSON.parse(localStorage.getItem('ljudval2') || '{}')) } catch {}
 
   const audio = () => {
     if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)()
@@ -146,8 +150,8 @@
       setTimeout(() => button.classList.remove('on'), end * 1000)
     }
   }
-  const okBuf = (i) => get('ok' + i, () => renderOk(OK[i]))
-  const fiveBuf = (i) => get('five' + i, () => renderFive(OK[i]))
+  const okBuf = (i) => get('ok' + i, () => renderClean(CLEAN[i]))
+  const fiveBuf = (i) => get('five' + i, () => renderCleanFive(CLEAN[i]))
   const grpBuf = (g, T) => get(`g${g}-${T}`, () => renderGroup(GROUPS[g], T))
 
   const btn = (label, cls, fn) => {
@@ -158,7 +162,7 @@
     return b
   }
 
-  function save() { try { localStorage.setItem('ljudval', JSON.stringify(choice)) } catch {} }
+  function save() { try { localStorage.setItem('ljudval2', JSON.stringify(choice)) } catch {} }
   function summary() {
     const ok = choice.ok != null ? `<b>Rätt-ljud ${choice.ok + 1}</b> ${META.ok[choice.ok].name}` : 'Inget rätt-ljud valt'
     const gr = choice.group != null ? `<b>Firande ${choice.group + 1}</b> ${META.groups[choice.group].name}` : 'Inget firande valt'
