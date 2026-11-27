@@ -1,0 +1,146 @@
+<title>Appbild Japanskan</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap">
+<style>
+  /* Layout: filterrad överst, sedan ett rutnät av stora ikoner med storleksprov; fast valrad längst ner. */
+  :root {
+    --bg: #f4f5f8; --surface: #ffffff; --fg: #1c2230; --muted: #5d667a; --line: #dde1ea;
+    --accent: #2c4a8f; --accent-fg: #ffffff; --accent-soft: #e4eaf8;
+    --font-text: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --font-head: 'Space Grotesk', 'Inter', system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12151d; --surface: #1a1f2b; --fg: #e8ebf3; --muted: #99a2b8; --line: #2c3344;
+      --accent: #8fa8ee; --accent-fg: #0f1422; --accent-soft: #252d45; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12151d; --surface: #1a1f2b; --fg: #e8ebf3; --muted: #99a2b8; --line: #2c3344;
+    --accent: #8fa8ee; --accent-fg: #0f1422; --accent-soft: #252d45; color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--fg); font: 15px/1.5 var(--font-text);
+    padding-block: 24px 120px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+  main { max-width: 1100px; margin: 0 auto; }
+  h1, h2 { font-family: var(--font-head); font-weight: 600; letter-spacing: -0.01em; text-wrap: balance; margin: 0; }
+  h1 { font-size: 1.9rem; }
+  h2 { font-size: 1.3rem; }
+  .lead { color: var(--muted); max-width: 62ch; margin: 8px 0 0; }
+  .chips { display: flex; flex-wrap: nowrap; overflow-x: auto; gap: 8px; margin: 20px 0 4px; position: sticky; top: env(safe-area-inset-top, 0px); background: var(--bg); padding-block: 8px; z-index: 4; }
+  .chip { flex: none; font: 500 0.85rem var(--font-text); color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 7px 14px; min-height: 36px; cursor: pointer; }
+  .chip[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+  section { margin-top: 28px; }
+  .sub { color: var(--muted); margin: 4px 0 14px; }
+  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 160px), 1fr)); }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+  .card.chosen { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+  .icon { width: 100%; aspect-ratio: 1; border-radius: 22.37%; overflow: hidden; display: block; box-shadow: 0 1px 3px rgba(0,0,0,.18), 0 6px 14px rgba(0,0,0,.12); }
+  .icon svg { width: 100%; height: 100%; display: block; }
+  .sizes { display: flex; align-items: flex-end; gap: 8px; }
+  .sizes .icon { box-shadow: none; flex: none; }
+  .meta { display: flex; align-items: baseline; gap: 8px; }
+  .num { font: 600 0.8rem var(--font-head); color: var(--muted); font-variant-numeric: tabular-nums; }
+  .name { font: 600 0.95rem var(--font-head); }
+  .desc { color: var(--muted); font-size: 0.82rem; margin: 0; flex: 1; line-height: 1.4; }
+  button.pick { font: 500 0.88rem var(--font-text); color: var(--fg); background: transparent; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; min-height: 40px; cursor: pointer; }
+  button.pick[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .bar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; background: var(--surface); border-top: 1px solid var(--line); padding-top: 10px; padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px)); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  .bar-in { max-width: 1100px; margin: 0 auto; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .bar-text { flex: 1; min-width: 200px; font-size: 0.9rem; }
+  .bar button { font: 500 0.88rem var(--font-text); background: var(--accent-soft); color: var(--fg); border: 1px solid transparent; border-radius: 8px; padding: 9px 14px; min-height: 40px; cursor: pointer; }
+  .note { color: var(--muted); font-size: 0.85rem; max-width: 62ch; }
+</style>
+
+<main>
+  <h1>Appbild för Japanskan</h1>
+  <p class="lead">50 förslag i fem serier. Välj en eller flera favoriter med Välj. Säg sedan numren till mig, eller tryck på Kopiera längst ner.</p>
+  <p class="note">Varje förslag visas stort och i tre små storlekar (60, 40 och 29 px) så att du ser om det fungerar som liten ikon på hemskärmen. Alla bokstäver är ritade som former, så bilderna ser likadana ut på alla enheter.</p>
+  <div class="chips" id="chips" role="group" aria-label="Visa serie"></div>
+  <div id="out"></div>
+</main>
+
+<div class="bar">
+  <div class="bar-in">
+    <div class="bar-text" id="summary" aria-live="polite"></div>
+    <button id="clear">Rensa</button>
+    <button id="copy">Kopiera val</button>
+  </div>
+</div>
+
+<script>
+/*DATA*/
+(() => {
+  const $ = (s) => document.querySelector(s)
+  const chosen = new Set()
+  try { JSON.parse(localStorage.getItem('appbild') || '[]').forEach((n) => chosen.add(n)) } catch {}
+  let filter = 'Alla'
+  const save = () => { try { localStorage.setItem('appbild', JSON.stringify([...chosen])) } catch {} }
+  const byNr = new Map()
+  DATA.forEach((g) => g.items.forEach((it) => byNr.set(it.nr, it)))
+
+  function chips() {
+    const el = $('#chips')
+    el.innerHTML = ''
+    ;['Alla', ...DATA.map((g) => g.name), 'Favoriter'].forEach((name) => {
+      const b = document.createElement('button')
+      b.className = 'chip'
+      b.textContent = name
+      b.setAttribute('aria-pressed', filter === name)
+      b.addEventListener('click', () => { filter = name; chips(); render() })
+      el.append(b)
+    })
+  }
+  function card(it) {
+    const el = document.createElement('div')
+    el.className = 'card' + (chosen.has(it.nr) ? ' chosen' : '')
+    el.innerHTML = `<div class="icon">${it.svg}</div>
+      <div class="sizes">${[60, 40, 29].map((s) => `<div class="icon" style="width:${s}px;height:${s}px">${it.svg}</div>`).join('')}</div>
+      <div class="meta"><span class="num">${String(it.nr).padStart(2, '0')}</span><span class="name"></span></div><p class="desc"></p>`
+    el.querySelector('.name').textContent = it.name
+    el.querySelector('.desc').textContent = it.desc
+    const b = document.createElement('button')
+    b.className = 'pick'
+    b.textContent = 'Välj'
+    b.setAttribute('aria-pressed', chosen.has(it.nr))
+    b.addEventListener('click', () => {
+      chosen.has(it.nr) ? chosen.delete(it.nr) : chosen.add(it.nr)
+      save()
+      b.setAttribute('aria-pressed', chosen.has(it.nr))
+      el.classList.toggle('chosen', chosen.has(it.nr))
+      summary()
+      if (filter === 'Favoriter') render()
+    })
+    el.append(b)
+    return el
+  }
+  function render() {
+    const out = $('#out')
+    out.innerHTML = ''
+    const groups = filter === 'Alla' ? DATA : filter === 'Favoriter' ? [{ name: 'Favoriter', desc: chosen.size ? 'Dina valda bilder.' : 'Du har inte valt någon bild än.', items: [...chosen].sort((a, b) => a - b).map((n) => byNr.get(n)) }] : DATA.filter((g) => g.name === filter)
+    groups.forEach((g) => {
+      const s = document.createElement('section')
+      s.innerHTML = `<h2></h2><p class="sub"></p><div class="grid"></div>`
+      s.querySelector('h2').textContent = g.name
+      s.querySelector('.sub').textContent = g.desc
+      g.items.forEach((it) => s.querySelector('.grid').append(card(it)))
+      out.append(s)
+    })
+  }
+  function summary() {
+    const list = [...chosen].sort((a, b) => a - b)
+    $('#summary').innerHTML = list.length ? `<b>Valt:</b> ${list.map((n) => `${n} ${byNr.get(n).name}`).join(', ')}` : 'Inga bilder valda'
+  }
+  $('#clear').addEventListener('click', () => { chosen.clear(); save(); summary(); render() })
+  $('#copy').addEventListener('click', (e) => {
+    const t = 'Appbild: ' + ([...chosen].sort((a, b) => a - b).map((n) => `${n} ${byNr.get(n).name}`).join(', ') || '–')
+    const done = () => { e.target.textContent = 'Kopierat'; setTimeout(() => (e.target.textContent = 'Kopiera val'), 1500) }
+    try { navigator.clipboard.writeText(t).then(done, () => { e.target.textContent = t }) } catch { e.target.textContent = t }
+  })
+  chips(); render(); summary()
+})()
+</script>
