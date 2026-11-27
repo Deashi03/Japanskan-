@@ -6,6 +6,7 @@ import { dayIndex, dayStart, endOfDay } from './days'
 import { afterIntro, buildExercise, buildQueue, buildReviewQueue, studiedCount, checkReading, checkSwedish, extraQueue, findConfusion, freshWords, hintFor, meaningPrompt, nextFresh, overtimeQueue, pickExample, remainingReviews, shortMeaning, newQuota, requeue, type QItem } from './session'
 import { dayKey, streaks } from './stats'
 import { isDark } from './fx'
+import { milestoneLevel, streakTier } from './streak'
 import { furigana } from './furigana'
 import type { Snapshot } from './store'
 import { DEFAULT_SETTINGS, type CardData, type Word } from './types'
@@ -491,6 +492,25 @@ describe('streak och tema', () => {
     expect(isDark('schedule', '20:00', '07:00', at(3))).toBe(true)
     expect(isDark('schedule', '20:00', '07:00', at(12))).toBe(false)
     expect(isDark('dark', '', '')).toBe(true)
+  })
+})
+
+describe('ljudets nivå följer sviten', () => {
+  const tiers = (from: number, count: number) => Array.from({ length: count }, (_, i) => streakTier(from + i * 5))
+  it('stiger ett steg var femte rätt upp till den högsta nivån', () => {
+    expect(tiers(0, 5)).toEqual([0, 1, 2, 3, 4])
+    expect([0, 4, 5, 9, 10, 24].map(streakTier)).toEqual([0, 0, 1, 1, 2, 4])
+  })
+  it('stannar inte på toppen i en lång svit utan går i vågor', () => {
+    expect(tiers(25, 12)).toEqual([3, 2, 1, 2, 3, 4, 3, 2, 1, 2, 3, 4])
+    // Aldrig samma nivå två femtal i rad efter toppen, och aldrig tillbaka till det nakna grundljudet.
+    for (let c = 20; c < 500; c += 5) {
+      expect(streakTier(c)).not.toBe(streakTier(c + 5))
+      expect(streakTier(c)).toBeGreaterThanOrEqual(1)
+    }
+  })
+  it('10, 20, 30 … är milstolpar', () => {
+    expect([9, 10, 15, 20, 100].map(milestoneLevel)).toEqual([0, 1, 0, 2, 10])
   })
 })
 
