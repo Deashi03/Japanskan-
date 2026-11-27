@@ -85,7 +85,7 @@ Enhetstester (logik, schemaläggning, ljudplan, synk mot en låtsasserver):
 npm test
 ```
 
-Webbläsartester (Playwright; bygger appen och kör sju scenarier: första passet, lyssningsövningar,
+Webbläsartester (Playwright; bygger appen och kör nio scenarier: första passet, lyssningsövningar, repetitionspass,
 fel svar och förväxlingar, svit och ordlista). Första gången behövs webbläsaren:
 
 ```bash
